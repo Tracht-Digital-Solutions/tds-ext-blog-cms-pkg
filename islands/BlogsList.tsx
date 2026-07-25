@@ -664,7 +664,7 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
           {authors.map((a) => (
             <li key={a.id} className="flex items-center gap-2">
               <strong>{a.name}</strong>
-              {a.user_id ? <span className="chip chip--violet">Panel-Nutzer</span> : null}
+              {a.user_id ? <span className="chip chip--cat-violet">Panel-Nutzer</span> : null}
               {a.bio ? <span className="text-xs opacity-60">{a.bio}</span> : null}
               <button type="button" className="danger text-xs ml-auto" onClick={() => remove(a)}>Entfernen</button>
             </li>
