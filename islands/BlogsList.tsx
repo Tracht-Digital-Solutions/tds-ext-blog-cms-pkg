@@ -518,22 +518,22 @@ function PostEditor({
         </label>
       </div>
 
-      <label className="blog-editor__field">
+      <label className="tds-field-row">
         Titel
         <input value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="Titel des Beitrags" />
       </label>
 
-      <label className="blog-editor__field">
+      <label className="tds-field-row">
         Auszug
         <input value={form.excerpt} onChange={(e) => set("excerpt", e.target.value)} placeholder="Kurzbeschreibung (optional)" />
       </label>
 
-      <label className="blog-editor__field">
+      <label className="tds-field-row">
         Cover-Hinweis
         <input value={form.cover_hint} onChange={(e) => set("cover_hint", e.target.value)} placeholder="Bild-Hinweis (optional)" />
       </label>
 
-      <label className="blog-editor__field">
+      <label className="tds-field-row">
         Meta-Description (SEO)
         <input
           value={form.meta_description}
@@ -543,7 +543,7 @@ function PostEditor({
         />
       </label>
 
-      <label className="blog-editor__field">
+      <label className="tds-field-row">
         Tags / Keywords
         <input
           value={form.tags}
@@ -553,7 +553,7 @@ function PostEditor({
         />
       </label>
 
-      <div className="blog-editor__field">
+      <div className="tds-field-row">
         <div className="flex items-center gap-3">
           <span>Inhalt (Markdown)</span>
           <button type="button" className="text-xs ml-auto" onClick={() => setPreview((v) => !v)}>
