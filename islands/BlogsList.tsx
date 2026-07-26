@@ -205,7 +205,7 @@ export default function BlogsList() {
   return (
     <div className="blog-list">
       <form
-        className="blog-list__form"
+        className="tds-stack"
         onSubmit={(e) => {
           e.preventDefault();
           create();
@@ -221,7 +221,7 @@ export default function BlogsList() {
       ) : blogs.length === 0 ? (
         <p>Noch keine Blogs angelegt.</p>
       ) : (
-        <ul className="blog-list__list">
+        <ul className="tds-list">
           {blogs.map((b) => (
             <li key={b.id}>
               <button type="button" onClick={() => setSelected(b)}>
@@ -343,7 +343,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
   return (
     <div className="blog-posts">
       <button type="button" onClick={onBack}>← Blogs</button>
-      <div className="blog-posts__head">
+      <div className="tds-row tds-row--between">
         <h2>{blog.name}</h2>
         <button type="button" onClick={newPost}>Neuer Beitrag</button>
       </div>
@@ -352,7 +352,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
       ) : posts.length === 0 ? (
         <p>Noch keine Beiträge.</p>
       ) : (
-        <ul className="blog-posts__list">
+        <ul className="tds-list">
           {posts.map((p) => (
             <li key={`${p.slug}-${p.lang}`}>
               <button type="button" onClick={() => openPost(p)}>
@@ -375,7 +375,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
 
       <div className="blog-translate">
         <h3>Automatische Übersetzung</h3>
-        <p className="blog-translate__hint">
+        <p className="marginalia">
           Beim Speichern eines veröffentlichten Beitrags wird die Gegensprache per DeepL
           erzeugt (Schlüssel serverseitig via <code>BLOG_DEEPL_API_KEY</code>). Vorhandene
           Beiträge lassen sich hier nachziehen.
@@ -386,7 +386,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
 
       <div className="blog-rebuild">
         <h3>Rebuild-Konfiguration</h3>
-        <p className="blog-rebuild__hint">
+        <p className="marginalia">
           Repository (<code>owner/name</code>) und Workflow-Datei, die ein veröffentlichter
           Beitrag neu baut. Der Token wird serverseitig über <code>BLOG_REBUILD_TOKEN</code> bereitgestellt.
         </p>
@@ -486,7 +486,7 @@ function PostEditor({
       <button type="button" onClick={onCancel}>← Beiträge</button>
       <h2>{isExisting ? "Beitrag bearbeiten" : "Neuer Beitrag"}</h2>
 
-      <div className="blog-editor__meta">
+      <div className="marginalia">
         <label>
           Slug
           <input
@@ -567,7 +567,7 @@ function PostEditor({
           />
         ) : (
           <textarea
-            className="blog-editor__body"
+            className="tds-stack"
             value={form.body}
             onChange={(e) => set("body", e.target.value)}
             rows={18}
@@ -584,7 +584,7 @@ function PostEditor({
 
       {status ? <p className="tds-alert" role="status">{status}</p> : null}
 
-      <div className="blog-editor__actions">
+      <div className="tds-toolbar">
         <button type="button" onClick={save} disabled={busy}>Speichern</button>
         {isExisting ? (
           <button type="button" className="btn btn-danger" onClick={remove} disabled={busy}>Löschen</button>
@@ -661,7 +661,7 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
       {authors.length === 0 ? (
         <p className="text-xs opacity-60">Noch keine Autoren.</p>
       ) : (
-        <ul className="blog-authors__list">
+        <ul className="tds-list">
           {authors.map((a) => (
             <li key={a.id} className="flex items-center gap-2">
               <strong>{a.name}</strong>
