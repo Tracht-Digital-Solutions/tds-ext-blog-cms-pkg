@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Spinner } from "@tracht-digital-solutions/tds-shared/components";
 
 /**
  * Minimal, safe-by-construction markdown → HTML for the editor PREVIEW only (the
@@ -216,7 +217,7 @@ export default function BlogsList() {
       </form>
 
       {blogs === null ? (
-        <p>Wird geladen …</p>
+        <p role="status"><Spinner /></p>
       ) : blogs.length === 0 ? (
         <p>Noch keine Blogs angelegt.</p>
       ) : (
@@ -347,7 +348,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
         <button type="button" onClick={newPost}>Neuer Beitrag</button>
       </div>
       {posts === null ? (
-        <p>Wird geladen …</p>
+        <p role="status"><Spinner /></p>
       ) : posts.length === 0 ? (
         <p>Noch keine Beiträge.</p>
       ) : (
@@ -379,7 +380,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
           erzeugt (Schlüssel serverseitig via <code>BLOG_DEEPL_API_KEY</code>). Vorhandene
           Beiträge lassen sich hier nachziehen.
         </p>
-        {backfillStatus ? <p className="status-pill status-pill--info">{backfillStatus}</p> : null}
+        {backfillStatus ? <p className="tds-alert" role="status">{backfillStatus}</p> : null}
         <button type="button" onClick={backfill}>Übersetzungen nachziehen</button>
       </div>
 
@@ -401,7 +402,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
             placeholder="dev.yml"
           />
         </div>
-        {rebuildStatus ? <p className="status-pill status-pill--info">{rebuildStatus}</p> : null}
+        {rebuildStatus ? <p className="tds-alert" role="status">{rebuildStatus}</p> : null}
         <div className="flex gap-2">
           <button type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
           <button type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
@@ -581,12 +582,12 @@ function PostEditor({
         Veröffentlichen (sonst Entwurf)
       </label>
 
-      {status ? <p className="status-pill status-pill--info">{status}</p> : null}
+      {status ? <p className="tds-alert" role="status">{status}</p> : null}
 
       <div className="blog-editor__actions">
         <button type="button" onClick={save} disabled={busy}>Speichern</button>
         {isExisting ? (
-          <button type="button" className="danger" onClick={remove} disabled={busy}>Löschen</button>
+          <button type="button" className="btn btn-danger" onClick={remove} disabled={busy}>Löschen</button>
         ) : null}
       </div>
     </div>
@@ -666,7 +667,7 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
               <strong>{a.name}</strong>
               {a.user_id ? <span className="chip chip--cat-violet">Panel-Nutzer</span> : null}
               {a.bio ? <span className="text-xs opacity-60">{a.bio}</span> : null}
-              <button type="button" className="danger text-xs ml-auto" onClick={() => remove(a)}>Entfernen</button>
+              <button type="button" className="btn btn-danger text-xs ml-auto" onClick={() => remove(a)}>Entfernen</button>
             </li>
           ))}
         </ul>
@@ -691,7 +692,7 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
         <input value={avatar} onChange={(e) => setAvatar(e.target.value)} placeholder="Avatar-URL (optional)" />
         <button type="button" onClick={add}>Autor hinzufügen</button>
       </div>
-      {status ? <p className="status-pill status-pill--info">{status}</p> : null}
+      {status ? <p className="tds-alert" role="status">{status}</p> : null}
     </div>
   );
 }

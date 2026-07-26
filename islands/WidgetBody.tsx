@@ -13,5 +13,5 @@ export default function PostsCount() {
       alive = false;
     };
   }, []);
-  return <p className="widget__metric">{posts === null ? "…" : posts}</p>;
+  return <p className="tds-widget__metric">{posts === null ? "…" : posts}</p>;
 }
