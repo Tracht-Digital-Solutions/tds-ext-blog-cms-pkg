@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Spinner } from "@tracht-digital-solutions/tds-shared/components";
+import { ConfirmDialog, Spinner } from "@tracht-digital-solutions/tds-shared/components";
 
 /**
  * Minimal, safe-by-construction markdown → HTML for the editor PREVIEW only (the
@@ -431,6 +431,7 @@ function PostEditor({
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const set = <K extends keyof PostDraft>(field: K, value: PostDraft[K]) =>
     setForm((f) => ({ ...f, [field]: value }));
@@ -470,10 +471,14 @@ function PostEditor({
     }
   };
 
+  // This delete had NO confirmation at all — a single click on „Löschen" wiped
+  // the post. It is now gated by the same <ConfirmDialog> as every other
+  // destructive action.
   const remove = async () => {
     setBusy(true);
     const res = await api(`/blogs/${blogKey}/posts/${form.slug}?lang=${form.lang}`, { method: "DELETE" });
     setBusy(false);
+    setConfirmDelete(false);
     if (res.ok) {
       onDone();
     } else {
@@ -587,9 +592,18 @@ function PostEditor({
       <div className="tds-toolbar">
         <button type="button" onClick={save} disabled={busy}>Speichern</button>
         {isExisting ? (
-          <button type="button" className="btn btn-danger" onClick={remove} disabled={busy}>Löschen</button>
+          <button type="button" className="btn btn-danger" onClick={() => setConfirmDelete(true)} disabled={busy}>Löschen</button>
         ) : null}
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title={`Beitrag „${form.title || form.slug}“ löschen?`}
+        message="Die Sprachfassung wird dauerhaft entfernt. Das lässt sich nicht rückgängig machen."
+        busy={busy}
+        onConfirm={() => void remove()}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }
@@ -602,6 +616,8 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
   const [status, setStatus] = useState<string | null>(null);
   const [panelUsers, setPanelUsers] = useState<PanelUser[]>([]);
   const [pickedUser, setPickedUser] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<Author | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Panel users eligible to be a byline: blog authors (admins are implicit).
   useEffect(() => {
@@ -649,10 +665,17 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
     void post({ user_id: u.id, name: (u.name ?? u.email).trim() }, () => setPickedUser(""));
   };
 
-  const remove = async (a: Author) => {
-    if (!window.confirm(`Autor „${a.name}“ entfernen? Beiträge behalten die Byline nicht.`)) return;
-    const res = await api(`/blog/authors/${a.id}`, { method: "DELETE" });
-    if (res.ok) onChange();
+  const confirmRemove = async () => {
+    const a = pendingDelete;
+    if (!a) return;
+    setDeleting(true);
+    try {
+      const res = await api(`/blog/authors/${a.id}`, { method: "DELETE" });
+      setPendingDelete(null);
+      if (res.ok) onChange();
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -667,11 +690,22 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
               <strong>{a.name}</strong>
               {a.user_id ? <span className="chip chip--cat-violet">Panel-Nutzer</span> : null}
               {a.bio ? <span className="text-xs opacity-60">{a.bio}</span> : null}
-              <button type="button" className="btn btn-danger text-xs ml-auto" onClick={() => remove(a)}>Entfernen</button>
+              <button type="button" className="btn btn-danger text-xs ml-auto" onClick={() => setPendingDelete(a)}>Entfernen</button>
             </li>
           ))}
         </ul>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`Autor „${pendingDelete?.name ?? ""}“ entfernen?`}
+        message="Bestehende Beiträge behalten die Byline nicht."
+        confirmLabel="Entfernen"
+        busy={deleting}
+        onConfirm={() => void confirmRemove()}
+        onCancel={() => setPendingDelete(null)}
+      />
+
 
       {importable.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 mt-3">
