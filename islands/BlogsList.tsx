@@ -13,9 +13,16 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/**
+ * Allow-list the scheme of an href. The input is ALREADY HTML-escaped — the
+ * whole line goes through `escapeHtml` before `inlineMd` runs — so escaping
+ * again here would double-encode: `/a?x=1&y=2` became `…&amp;amp;…` and the
+ * browser resolved a wrong target. Quotes cannot break out of the attribute
+ * because that first pass already turned them into `&quot;`.
+ */
 function safeHref(url: string): string | null {
   const u = url.trim();
-  return /^(https?:\/\/|mailto:|\/|#)/i.test(u) ? escapeHtml(u) : null;
+  return /^(https?:\/\/|mailto:|\/|#)/i.test(u) ? u : null;
 }
 
 function inlineMd(escaped: string): string {
@@ -30,7 +37,12 @@ function inlineMd(escaped: string): string {
     });
 }
 
-function renderMarkdown(src: string): string {
+/**
+ * Exported for the test-suite only — this is the extension's XSS boundary (its
+ * output goes straight into `dangerouslySetInnerHTML`), so it is covered
+ * directly rather than only through the preview pane.
+ */
+export function renderMarkdown(src: string): string {
   const lines = src.replace(/\r\n/g, "\n").split("\n");
   const out: string[] = [];
   let inFence = false;

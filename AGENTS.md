@@ -37,6 +37,37 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
   at request time (rebound per request by the core AuthMiddleware).
 - DB-backed tests skip without `TDS_TEST_DB_DSN`; the committed test covers
   routes + RBAC + payload validation without a DB.
+- **`renderMarkdown` is the extension's XSS boundary and is exported for the
+  suite.** Its output goes straight into `dangerouslySetInnerHTML` in the editor
+  preview. It is escape-FIRST (every text run is HTML-escaped before any md
+  transform), which is what lets this package skip dompurify — see the root
+  `CLAUDE.md`. **`safeHref` must not escape again**: `inlineMd` already receives
+  escaped text, so a second pass double-encoded ampersands and every link with a
+  query string (`?a=1&b=2`) resolved to the wrong URL. Fixed in 0.1.24.
+
+## Tests
+
+`npm run test:run` (vitest; jsdom per-file via a `@vitest-environment` docblock).
+
+- `islands/markdown.test.ts` — the escape-first renderer, and the bulk of the
+  value here: script/img/iframe payloads stay inert text, the href allow-list
+  refuses `javascript:`/`data:`/`vbscript:`, and no tag outside the emitted
+  allow-list ever reaches the DOM. If one of these fails, admin markdown can
+  execute in the frontend.
+- `islands/BlogsList.test.tsx` — blog + post CRUD through the real UI against a
+  URL/method-matching fetch stub, so each test asserts the exact request the PHP
+  module receives (payload trimming, the `?lang=` on delete, the 503/422 status
+  copy).
+- `islands/BlogSettings.test.tsx` — the masked-secret contract: a secret never
+  round-trips to the DOM, and a **blank** secret on save means *keep*, so an
+  admin toggling auto-translate cannot wipe the DeepL key.
+- `src/index.test.ts` + `tests/packaging.test.ts` — the manifest as a product
+  build sees it: every referenced permission is declared, every specifier
+  resolves to a real file that is both covered by `exports` and inside the
+  published `files` list. These failures otherwise surface in someone else's
+  product build.
+
+Verified by mutation: 23 deliberate breakages introduced, 23 caught.
 
 ## Checkpoint status
 
