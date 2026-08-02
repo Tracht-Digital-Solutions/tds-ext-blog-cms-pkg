@@ -223,9 +223,9 @@ export default function BlogsList() {
           create();
         }}
       >
-        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="blog-key (kebab)" required />
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
-        <button type="submit">Blog hinzufügen</button>
+        <input className="field-boxed" value={key} onChange={(e) => setKey(e.target.value)} placeholder="blog-key (kebab)" required />
+        <input className="field-boxed" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
+        <button className="btn btn-primary" type="submit">Blog hinzufügen</button>
       </form>
 
       {blogs === null ? (
@@ -236,7 +236,7 @@ export default function BlogsList() {
         <ul className="tds-list">
           {blogs.map((b) => (
             <li key={b.id}>
-              <button type="button" onClick={() => setSelected(b)}>
+              <button className="btn btn-ghost" type="button" onClick={() => setSelected(b)}>
                 <strong>{b.name}</strong> <code>{b.blog_key}</code>
               </button>
             </li>
@@ -354,10 +354,10 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
 
   return (
     <div className="blog-posts">
-      <button type="button" onClick={onBack}>← Blogs</button>
+      <button className="btn btn-ghost" type="button" onClick={onBack}>← Blogs</button>
       <div className="tds-row tds-row--between">
         <h2>{blog.name}</h2>
-        <button type="button" onClick={newPost}>Neuer Beitrag</button>
+        <button className="btn btn-ghost" type="button" onClick={newPost}>Neuer Beitrag</button>
       </div>
       {posts === null ? (
         <p><Spinner /></p>
@@ -367,7 +367,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
         <ul className="tds-list">
           {posts.map((p) => (
             <li key={`${p.slug}-${p.lang}`}>
-              <button type="button" onClick={() => openPost(p)}>
+              <button className="btn btn-ghost" type="button" onClick={() => openPost(p)}>
                 <strong>{p.title}</strong> <code>{p.slug}</code>
                 <span className="chip chip--neutral">{p.lang}</span>
                 <span className={`chip chip--${p.draft ? "warning" : "success"}`}>
@@ -393,7 +393,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
           Beiträge lassen sich hier nachziehen.
         </p>
         {backfillStatus ? <p className="tds-alert" role="status">{backfillStatus}</p> : null}
-        <button type="button" onClick={backfill}>Übersetzungen nachziehen</button>
+        <button className="btn btn-primary" type="button" onClick={backfill}>Übersetzungen nachziehen</button>
       </div>
 
       <div className="blog-rebuild">
@@ -403,12 +403,12 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
           Beitrag neu baut. Der Token wird serverseitig über <code>BLOG_REBUILD_TOKEN</code> bereitgestellt.
         </p>
         <div className="flex gap-2">
-          <input
+          <input className="field-boxed"
             value={rebuildRepo}
             onChange={(e) => setRebuildRepo(e.target.value)}
             placeholder="Tracht-Digital-Solutions/tds-blog-frontend"
           />
-          <input
+          <input className="field-boxed"
             value={rebuildWorkflow}
             onChange={(e) => setRebuildWorkflow(e.target.value)}
             placeholder="dev.yml"
@@ -416,8 +416,8 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
         </div>
         {rebuildStatus ? <p className="tds-alert" role="status">{rebuildStatus}</p> : null}
         <div className="flex gap-2">
-          <button type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
-          <button type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
+          <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
+          <button className="btn btn-primary" type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
         </div>
       </div>
     </div>
@@ -500,13 +500,13 @@ function PostEditor({
 
   return (
     <div className="blog-editor">
-      <button type="button" onClick={onCancel}>← Beiträge</button>
+      <button className="btn btn-ghost" type="button" onClick={onCancel}>← Beiträge</button>
       <h2>{isExisting ? "Beitrag bearbeiten" : "Neuer Beitrag"}</h2>
 
       <div className="marginalia">
         <label>
           Slug
-          <input
+          <input className="field-boxed"
             value={form.slug}
             onChange={(e) => set("slug", e.target.value)}
             placeholder="mein-beitrag"
@@ -515,18 +515,18 @@ function PostEditor({
         </label>
         <label>
           Sprache
-          <select value={form.lang} onChange={(e) => set("lang", e.target.value)} disabled={isExisting}>
+          <select className="field-boxed" value={form.lang} onChange={(e) => set("lang", e.target.value)} disabled={isExisting}>
             <option value="de">de</option>
             <option value="en">en</option>
           </select>
         </label>
         <label>
           Kategorie
-          <input value={form.category} onChange={(e) => set("category", e.target.value)} placeholder="allgemein" />
+          <input className="field-boxed" value={form.category} onChange={(e) => set("category", e.target.value)} placeholder="allgemein" />
         </label>
         <label>
           Autor
-          <select value={String(form.author_id)} onChange={(e) => set("author_id", Number(e.target.value))}>
+          <select className="field-boxed" value={String(form.author_id)} onChange={(e) => set("author_id", Number(e.target.value))}>
             <option value="0">— kein Autor —</option>
             {authors.map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
@@ -537,22 +537,22 @@ function PostEditor({
 
       <label className="tds-field-row">
         Titel
-        <input value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="Titel des Beitrags" />
+        <input className="field-boxed" value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="Titel des Beitrags" />
       </label>
 
       <label className="tds-field-row">
         Auszug
-        <input value={form.excerpt} onChange={(e) => set("excerpt", e.target.value)} placeholder="Kurzbeschreibung (optional)" />
+        <input className="field-boxed" value={form.excerpt} onChange={(e) => set("excerpt", e.target.value)} placeholder="Kurzbeschreibung (optional)" />
       </label>
 
       <label className="tds-field-row">
         Cover-Hinweis
-        <input value={form.cover_hint} onChange={(e) => set("cover_hint", e.target.value)} placeholder="Bild-Hinweis (optional)" />
+        <input className="field-boxed" value={form.cover_hint} onChange={(e) => set("cover_hint", e.target.value)} placeholder="Bild-Hinweis (optional)" />
       </label>
 
       <label className="tds-field-row">
         Meta-Description (SEO)
-        <input
+        <input className="field-boxed"
           value={form.meta_description}
           onChange={(e) => set("meta_description", e.target.value)}
           maxLength={300}
@@ -562,7 +562,7 @@ function PostEditor({
 
       <label className="tds-field-row">
         Tags / Keywords
-        <input
+        <input className="field-boxed"
           value={form.tags}
           onChange={(e) => set("tags", e.target.value)}
           maxLength={200}
@@ -573,7 +573,7 @@ function PostEditor({
       <div className="tds-field-row">
         <div className="flex items-center gap-3">
           <span>Inhalt (Markdown)</span>
-          <button type="button" className="text-xs ml-auto" onClick={() => setPreview((v) => !v)}>
+          <button type="button" className="btn btn-ghost text-xs ml-auto" onClick={() => setPreview((v) => !v)}>
             {preview ? "Bearbeiten" : "Vorschau"}
           </button>
         </div>
@@ -584,7 +584,7 @@ function PostEditor({
           />
         ) : (
           <textarea
-            className="tds-stack"
+            className="field-boxed"
             value={form.body}
             onChange={(e) => set("body", e.target.value)}
             rows={18}
@@ -602,7 +602,7 @@ function PostEditor({
       {status ? <p className="tds-alert" role="status">{status}</p> : null}
 
       <div className="tds-toolbar">
-        <button type="button" onClick={save} disabled={busy}>Speichern</button>
+        <button className="btn btn-primary" type="button" onClick={save} disabled={busy}>Speichern</button>
         {isExisting ? (
           <button type="button" className="btn btn-danger" onClick={() => setConfirmDelete(true)} disabled={busy}>Löschen</button>
         ) : null}
@@ -722,21 +722,21 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
       {importable.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 mt-3">
           <span className="text-sm">Aus Panel-Nutzer:</span>
-          <select value={pickedUser} onChange={(e) => setPickedUser(e.target.value)}>
+          <select className="field-boxed" value={pickedUser} onChange={(e) => setPickedUser(e.target.value)}>
             <option value="">— Nutzer wählen —</option>
             {importable.map((u) => (
               <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
             ))}
           </select>
-          <button type="button" onClick={importUser} disabled={pickedUser === ""}>Als Autor übernehmen</button>
+          <button className="btn btn-primary" type="button" onClick={importUser} disabled={pickedUser === ""}>Als Autor übernehmen</button>
         </div>
       ) : null}
 
       <div className="flex flex-wrap gap-2 mt-2">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Gast-Autor)" />
-        <input value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Kurzbio (optional)" />
-        <input value={avatar} onChange={(e) => setAvatar(e.target.value)} placeholder="Avatar-URL (optional)" />
-        <button type="button" onClick={add}>Autor hinzufügen</button>
+        <input className="field-boxed" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Gast-Autor)" />
+        <input className="field-boxed" value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Kurzbio (optional)" />
+        <input className="field-boxed" value={avatar} onChange={(e) => setAvatar(e.target.value)} placeholder="Avatar-URL (optional)" />
+        <button className="btn btn-primary" type="button" onClick={add}>Autor hinzufügen</button>
       </div>
       {status ? <p className="tds-alert" role="status">{status}</p> : null}
     </div>
