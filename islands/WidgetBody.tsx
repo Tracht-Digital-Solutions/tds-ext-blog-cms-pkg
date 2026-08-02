@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Skeleton } from "@tracht-digital-solutions/tds-shared/components";
 
 /** "Blog-Beiträge" widget body — the total post count, from /blog/summary. */
 export default function PostsCount() {
@@ -13,5 +14,7 @@ export default function PostsCount() {
       alive = false;
     };
   }, []);
-  return <p className="tds-widget__metric">{posts === null ? "…" : posts}</p>;
+  return <p className="tds-widget__metric" aria-busy={posts === null}>
+      {posts === null ? <Skeleton width="3ch" height="1.75rem" /> : posts}
+    </p>;
 }

@@ -229,7 +229,7 @@ export default function BlogsList() {
       </form>
 
       {blogs === null ? (
-        <p role="status"><Spinner /></p>
+        <p><Spinner /></p>
       ) : blogs.length === 0 ? (
         <p>Noch keine Blogs angelegt.</p>
       ) : (
@@ -360,7 +360,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
         <button type="button" onClick={newPost}>Neuer Beitrag</button>
       </div>
       {posts === null ? (
-        <p role="status"><Spinner /></p>
+        <p><Spinner /></p>
       ) : posts.length === 0 ? (
         <p>Noch keine Beiträge.</p>
       ) : (
