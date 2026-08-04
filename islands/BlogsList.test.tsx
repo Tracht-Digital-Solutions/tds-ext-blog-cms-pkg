@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import BlogsList from "./BlogsList";
+import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
 
 /**
  * The blog-CMS island, driven through the real UI. `globals` is off in the
@@ -27,7 +28,15 @@ function respond(match: RegExp, body: unknown, status = 200, method?: string) {
   });
 }
 
+/** Outcomes are toasts now — collected off the `tds:toast` bus. */
+let toasts: Array<{ variant: string; message: string }> = [];
+const collectToast = (e: Event) => {
+  toasts.push((e as CustomEvent<{ variant: string; message: string }>).detail);
+};
+
 beforeEach(() => {
+  toasts = [];
+  window.addEventListener(TOAST_EVENT, collectToast);
   handlers = [];
   calls = [];
   vi.stubGlobal(
@@ -55,6 +64,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.removeEventListener(TOAST_EVENT, collectToast);
   cleanup();
 });
 
@@ -330,7 +340,7 @@ describe("the post editor", () => {
     await u.type(screen.getByPlaceholderText("Titel des Beitrags"), "T");
     await u.type(screen.getByPlaceholderText(/Text in Markdown/), "B");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
-    expect(await screen.findByText(/HTTP 409/)).toBeTruthy();
+await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("409"))).toBe(true));
   });
 
   it("returns to the post list after a successful save", async () => {
@@ -425,6 +435,9 @@ describe("existing posts", () => {
   it("deletes with the language as a query parameter", async () => {
     const u = await openPost();
     await u.click(await screen.findByRole("button", { name: "Löschen" }));
+    // The post delete is gated by <ConfirmDialog> now (it used to wipe a post
+    // on a single click); confirming is the last matching button.
+    await u.click(screen.getAllByRole("button", { name: /Löschen/ }).at(-1)!);
     await waitFor(() => {
       const del = calls.find((c) => c.method === "DELETE");
       expect(del?.url).toBe("/blogs/haupt/posts/hallo?lang=de");
@@ -435,7 +448,10 @@ describe("existing posts", () => {
     const u = await openPost();
     respond(/\/posts\/hallo\?lang=de$/, {}, 403, "DELETE");
     await u.click(await screen.findByRole("button", { name: "Löschen" }));
-    expect(await screen.findByText(/HTTP 403/)).toBeTruthy();
+    // The post delete is gated by <ConfirmDialog> now (it used to wipe a post
+    // on a single click); confirming is the last matching button.
+    await u.click(screen.getAllByRole("button", { name: /Löschen/ }).at(-1)!);
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("403"))).toBe(true));
   });
 });
 
@@ -477,14 +493,14 @@ describe("rebuild and translation controls", () => {
     const u = await openBlog();
     respond(/\/rebuild$/, {}, 500, "POST");
     await u.click(await screen.findByRole("button", { name: /Jetzt neu bauen/ }));
-    expect(await screen.findByText(/HTTP 500/)).toBeTruthy();
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
   });
 
   it("reports the counts returned by a translation backfill", async () => {
     const u = await openBlog();
     respond(/\/translations\/backfill$/, { created: 3, skipped: 1 }, 200, "POST");
     await u.click(await screen.findByRole("button", { name: /Übersetzungen nachziehen/ }));
-    expect(await screen.findByText(/3 erstellt, 1 übersprungen/)).toBeTruthy();
+await waitFor(() => expect(toasts.some((t) => t.variant === "success" && /3 erstellt, 1 übersprungen/.test(t.message))).toBe(true));
   });
 
   it("explains a 503 from a backfill as DeepL not being configured", async () => {
@@ -500,7 +516,7 @@ describe("rebuild and translation controls", () => {
       /backfill/.test(url) && init?.method === "POST" ? { status: 200, body: undefined } : undefined,
     );
     await u.click(await screen.findByRole("button", { name: /Übersetzungen nachziehen/ }));
-    expect(await screen.findByText(/0 erstellt, 0 übersprungen/)).toBeTruthy();
+await waitFor(() => expect(toasts.some((t) => t.variant === "success" && /0 erstellt, 0 übersprungen/.test(t.message))).toBe(true));
   });
 
   it("pre-fills the rebuild workflow with dev.yml when the blog has none", async () => {

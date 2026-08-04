@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ConfirmDialog, Spinner } from "@tracht-digital-solutions/tds-shared/components";
+import { ConfirmDialog, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 
 /**
  * Minimal, safe-by-construction markdown → HTML for the editor PREVIEW only (the
@@ -269,12 +269,16 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
     const res = await api(`/blogs/${blog.blog_key}/translations/backfill`, { method: "POST" });
     if (res.ok) {
       const d = await res.json().catch(() => ({}));
-      setBackfillStatus(`Fertig: ${d.created ?? 0} erstellt, ${d.skipped ?? 0} übersprungen.`);
+      setBackfillStatus(null);
+      toast.success(`Fertig: ${d.created ?? 0} erstellt, ${d.skipped ?? 0} übersprungen.`);
       loadPosts();
     } else if (res.status === 503) {
+      // A missing key is a CONFIGURATION problem, not a transient outcome —
+      // it stays on screen until someone sets the key.
       setBackfillStatus("Automatische Übersetzung ist nicht konfiguriert (BLOG_DEEPL_API_KEY).");
     } else {
-      setBackfillStatus(`Fehler (HTTP ${res.status}).`);
+      setBackfillStatus(null);
+      toast.danger(`Übersetzungslauf fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -284,20 +288,27 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rebuild_repo: rebuildRepo.trim(), rebuild_workflow: rebuildWorkflow.trim() }),
     });
-    setRebuildStatus(res.ok ? "Rebuild-Konfiguration gespeichert." : `Fehler (HTTP ${res.status}).`);
+    if (res.ok) toast.success("Rebuild-Konfiguration gespeichert.");
+    else toast.danger(`Rebuild-Konfiguration konnte nicht gespeichert werden (HTTP ${res.status}).`);
   };
 
   const rebuildNow = async () => {
     setRebuildStatus("Rebuild wird ausgelöst …");
     const res = await api(`/blogs/${blog.blog_key}/rebuild`, { method: "POST" });
     if (res.ok) {
-      setRebuildStatus("Rebuild ausgelöst.");
-    } else if (res.status === 503) {
-      setRebuildStatus("Kein Rebuild-Token konfiguriert (BLOG_REBUILD_TOKEN).");
-    } else if (res.status === 422) {
-      setRebuildStatus("Für diesen Blog ist kein Repository hinterlegt.");
+      setRebuildStatus(null);
+      toast.success("Rebuild ausgelöst.");
+    } else if (res.status === 503 || res.status === 422) {
+      // Both are missing CONFIGURATION (no token / no repo) — they stay on
+      // screen, because they name something the operator has to go and fix.
+      setRebuildStatus(
+        res.status === 503
+          ? "Kein Rebuild-Token konfiguriert (BLOG_REBUILD_TOKEN)."
+          : "Für diesen Blog ist kein Repository hinterlegt.",
+      );
     } else {
-      setRebuildStatus(`Fehler (HTTP ${res.status}).`);
+      setRebuildStatus(null);
+      toast.danger(`Rebuild fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -477,9 +488,10 @@ function PostEditor({
     });
     setBusy(false);
     if (res.ok) {
+      toast.success("Beitrag gespeichert.");
       onDone();
     } else {
-      setStatus(`Fehler beim Speichern (HTTP ${res.status}).`);
+      toast.danger(`Speichern fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -492,9 +504,10 @@ function PostEditor({
     setBusy(false);
     setConfirmDelete(false);
     if (res.ok) {
+      toast.success("Beitrag gelöscht.");
       onDone();
     } else {
-      setStatus(`Fehler beim Löschen (HTTP ${res.status}).`);
+      toast.danger(`Löschen fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -599,7 +612,8 @@ function PostEditor({
         Veröffentlichen (sonst Entwurf)
       </label>
 
-      {status ? <p className="tds-alert" role="status">{status}</p> : null}
+      {/* Validation only now — outcomes are toasts. */}
+      {status ? <p className="tds-alert tds-alert--danger" role="alert">{status}</p> : null}
 
       <div className="tds-toolbar">
         <button className="btn btn-primary" type="button" onClick={save} disabled={busy}>Speichern</button>
@@ -655,7 +669,7 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
       setStatus(null);
       onChange();
     } else {
-      setStatus(`Fehler (HTTP ${res.status}).`);
+      toast.danger(`Speichern fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -738,7 +752,8 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
         <input className="field-boxed" value={avatar} onChange={(e) => setAvatar(e.target.value)} placeholder="Avatar-URL (optional)" />
         <button className="btn btn-primary" type="button" onClick={add}>Autor hinzufügen</button>
       </div>
-      {status ? <p className="tds-alert" role="status">{status}</p> : null}
+      {/* Validation only now — outcomes are toasts. */}
+      {status ? <p className="tds-alert tds-alert--danger" role="alert">{status}</p> : null}
     </div>
   );
 }

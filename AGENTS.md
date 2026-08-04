@@ -44,6 +44,14 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
   `CLAUDE.md`. **`safeHref` must not escape again**: `inlineMd` already receives
   escaped text, so a second pass double-encoded ampersands and every link with a
   query string (`?a=1&b=2`) resolved to the wrong URL. Fixed in 0.1.24.
+- **Outcomes are toasts; a CONFIGURATION problem is not an outcome.** Saves,
+  deletes, the rebuild trigger and the translation backfill report through
+  `toast` (tds-shared `>=0.16.0`) — but a 503 "DeepL not configured" / 503 "no
+  rebuild token" / 422 "no repository" stays in the in-flow banner, because it
+  names something an operator has to go and fix rather than something that just
+  happened. The "…" progress lines also stay in-flow and are cleared when the
+  outcome arrives. Never mount a `ToastHost` here — the frontend host owns the
+  only one.
 
 ## Tests
 
