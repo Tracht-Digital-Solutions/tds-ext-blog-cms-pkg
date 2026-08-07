@@ -413,7 +413,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
           Repository (<code>owner/name</code>) und Workflow-Datei, die ein veröffentlichter
           Beitrag neu baut. Der Token wird serverseitig über <code>BLOG_REBUILD_TOKEN</code> bereitgestellt.
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <input className="field-boxed"
             value={rebuildRepo}
             onChange={(e) => setRebuildRepo(e.target.value)}
@@ -426,7 +426,7 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
           />
         </div>
         {rebuildStatus ? <p className="tds-alert" role="status">{rebuildStatus}</p> : null}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
           <button className="btn btn-primary" type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
         </div>
@@ -516,8 +516,13 @@ function PostEditor({
       <button className="btn btn-ghost" type="button" onClick={onCancel}>← Beiträge</button>
       <h2>{isExisting ? "Beitrag bearbeiten" : "Neuer Beitrag"}</h2>
 
-      <div className="marginalia">
-        <label>
+      {/* Was `.marginalia`, which is a TYPOGRAPHY rule (13px, muted colour)
+          and carries no layout at all — so these four fields stacked at every
+          width AND the inputs inherited the muted text colour.
+          `.tds-field-row` is the label/control pair this file already uses
+          further down; the grid is two-up from `sm`. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label className="tds-field-row">
           Slug
           <input className="field-boxed"
             value={form.slug}
@@ -526,18 +531,18 @@ function PostEditor({
             disabled={isExisting}
           />
         </label>
-        <label>
+        <label className="tds-field-row">
           Sprache
           <select className="field-boxed" value={form.lang} onChange={(e) => set("lang", e.target.value)} disabled={isExisting}>
             <option value="de">de</option>
             <option value="en">en</option>
           </select>
         </label>
-        <label>
+        <label className="tds-field-row">
           Kategorie
           <input className="field-boxed" value={form.category} onChange={(e) => set("category", e.target.value)} placeholder="allgemein" />
         </label>
-        <label>
+        <label className="tds-field-row">
           Autor
           <select className="field-boxed" value={String(form.author_id)} onChange={(e) => set("author_id", Number(e.target.value))}>
             <option value="0">— kein Autor —</option>
@@ -712,7 +717,11 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
       ) : (
         <ul className="tds-list">
           {authors.map((a) => (
-            <li key={a.id} className="flex items-center gap-2">
+            // `.tds-list__row` — the class this `<ul className="tds-list">`
+            // was already asking for, and the one that brings `flex-wrap`.
+            // Hand-rolled `flex` here meant four items (name, chip, a free-text
+            // bio and a button) on one un-wrappable line.
+            <li key={a.id} className="tds-list__row">
               <strong>{a.name}</strong>
               {a.user_id ? <span className="chip chip--cat-violet">Panel-Nutzer</span> : null}
               {a.bio ? <span className="text-xs opacity-60">{a.bio}</span> : null}
