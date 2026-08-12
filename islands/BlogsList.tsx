@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ConfirmDialog, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
+import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
 
 /**
  * Minimal, safe-by-construction markdown → HTML for the editor PREVIEW only (the
@@ -158,7 +159,7 @@ interface PostDraft {
   draft: boolean;
 }
 
-const api = (path: string, init?: RequestInit) => fetch(path, { credentials: "include", ...init });
+const api = apiFetch;
 
 const EMPTY_POST: PostDraft = {
   slug: "",
@@ -652,7 +653,7 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
 
   // Panel users eligible to be a byline: blog authors (admins are implicit).
   useEffect(() => {
-    fetch("/auth/admin/users", { credentials: "include" })
+    apiFetch("/auth/admin/users")
       .then((r) => (r.ok ? r.json() : { users: [] }))
       .then((d: { users?: PanelUser[] }) =>
         setPanelUsers((d.users ?? []).filter((u) => u.isBlogAuthor || u.isAdmin)))

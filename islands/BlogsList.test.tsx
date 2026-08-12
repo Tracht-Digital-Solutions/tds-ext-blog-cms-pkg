@@ -20,9 +20,18 @@ let handlers: Handler[] = [];
 let calls: Array<{ url: string; method: string; body: unknown }> = [];
 
 /** Register a canned answer; later registrations win over earlier ones. */
+
+/**
+ * Path + query of a request. The island calls an ABSOLUTE URL now (via
+ * `apiFetch`); a relative one would hit the product's own static host and come
+ * back as SPA-fallback HTML with a 200. Matching on the path keeps the route
+ * matchers below anchored.
+ */
+const pathOf = (url: string) => String(url).replace(/^https?:\/\/[^/]+/i, "");
+
 function respond(match: RegExp, body: unknown, status = 200, method?: string) {
   handlers.unshift((url, init) => {
-    if (!match.test(url)) return undefined;
+    if (!match.test(pathOf(url))) return undefined;
     if (method && (init?.method ?? "GET") !== method) return undefined;
     return { status, body };
   });
@@ -75,7 +84,7 @@ const BLOG = { id: 1, blog_key: "haupt", name: "Hauptblog" };
 async function renderList(blogs: unknown[] = [BLOG]) {
   respond(/\/blogs$/, { blogs });
   render(<BlogsList />);
-  await waitFor(() => expect(calls.some((c) => c.url === "/blogs")).toBe(true));
+  await waitFor(() => expect(calls.some((c) => pathOf(c.url) === "/blogs")).toBe(true));
 }
 
 describe("loading the blog list", () => {
@@ -130,7 +139,7 @@ describe("creating a blog", () => {
   it("posts a valid key and name", async () => {
     const posts = await submit("mein-blog", "Mein Blog");
     expect(posts).toHaveLength(1);
-    expect(posts[0]!.url).toBe("/blogs");
+    expect(pathOf(posts[0]!.url)).toBe("/blogs");
     expect(posts[0]!.body).toEqual({ blog_key: "mein-blog", name: "Mein Blog" });
   });
 
@@ -170,7 +179,7 @@ describe("creating a blog", () => {
     await u.type(screen.getByPlaceholderText("Name"), "Neu");
     await u.click(screen.getByRole("button", { name: "Blog hinzufügen" }));
 
-    await waitFor(() => expect(calls.filter((c) => c.url === "/blogs" && c.method === "GET")).toHaveLength(2));
+    await waitFor(() => expect(calls.filter((c) => pathOf(c.url) === "/blogs" && c.method === "GET")).toHaveLength(2));
     expect((screen.getByPlaceholderText("blog-key (kebab)") as HTMLInputElement).value).toBe("");
     expect((screen.getByPlaceholderText("Name") as HTMLInputElement).value).toBe("");
   });
@@ -201,8 +210,8 @@ describe("opening a blog", () => {
   it("loads that blog's posts and the author list", async () => {
     await openBlog();
     await waitFor(() => {
-      expect(calls.some((c) => c.url === "/blogs/haupt/posts")).toBe(true);
-      expect(calls.some((c) => c.url === "/blog/authors")).toBe(true);
+      expect(calls.some((c) => pathOf(c.url) === "/blogs/haupt/posts")).toBe(true);
+      expect(calls.some((c) => pathOf(c.url) === "/blog/authors")).toBe(true);
     });
   });
 
@@ -211,8 +220,8 @@ describe("opening a blog", () => {
     respond(/\/blogs\/zweit\/posts$/, { posts: [] });
     respond(/\/blog\/authors$/, { authors: [] });
     await user().click(await screen.findByRole("button", { name: /Zweitblog/ }));
-    await waitFor(() => expect(calls.some((c) => c.url === "/blogs/zweit/posts")).toBe(true));
-    expect(calls.some((c) => c.url === "/blogs/haupt/posts")).toBe(false);
+    await waitFor(() => expect(calls.some((c) => pathOf(c.url) === "/blogs/zweit/posts")).toBe(true));
+    expect(calls.some((c) => pathOf(c.url) === "/blogs/haupt/posts")).toBe(false);
   });
 
   it("returns to the blog list", async () => {
@@ -280,7 +289,7 @@ describe("the post editor", () => {
     await u.click(screen.getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => expect(puts()).toHaveLength(1));
-    expect(puts()[0]!.url).toBe("/blogs/haupt/posts/mein-beitrag");
+    expect(pathOf(puts()[0]!.url)).toBe("/blogs/haupt/posts/mein-beitrag");
     expect(puts()[0]!.body).toMatchObject({
       lang: "de",
       title: "Titel",
@@ -440,7 +449,7 @@ describe("existing posts", () => {
     await u.click(screen.getAllByRole("button", { name: /Löschen/ }).at(-1)!);
     await waitFor(() => {
       const del = calls.find((c) => c.method === "DELETE");
-      expect(del?.url).toBe("/blogs/haupt/posts/hallo?lang=de");
+      expect(pathOf(del!.url)).toBe("/blogs/haupt/posts/hallo?lang=de");
     });
   });
 
