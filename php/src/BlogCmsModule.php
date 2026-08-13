@@ -12,6 +12,7 @@ use Tds\Ext\BlogCms\Service\DeeplTranslator;
 use Tds\Ext\BlogCms\Service\RebuildTrigger;
 use Tds\Ext\BlogCms\Service\TranslationSync;
 use Tds\Frontend\Contract\AbstractModule;
+use Tds\Frontend\Contract\ApiDocSource;
 use Tds\Frontend\Contract\PermissionDef;
 use Tds\Frontend\Contract\SettingsStore;
 use Tds\Frontend\Contract\UserContext;
@@ -22,7 +23,7 @@ use Tds\Frontend\Contract\UserContext;
  * (`blog:read`/`blog:write`, admins bypass); data via the core PDO. A save
  * triggering a static-blog rebuild lands in a later checkpoint.
  */
-final class BlogCmsModule extends AbstractModule
+final class BlogCmsModule extends AbstractModule implements ApiDocSource
 {
     private const LANGS = ['de', 'en'];
 
@@ -521,5 +522,16 @@ final class BlogCmsModule extends AbstractModule
     {
         $res->getBody()->write(json_encode($data, JSON_THROW_ON_ERROR));
         return $res->withStatus($status)->withHeader('Content-Type', 'application/json');
+    }
+
+    /**
+     * Route documentation for the admin frontend's API reference. Kept in its
+     * own file so the prose does not sit in the middle of the wiring.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function apiDocs(): array
+    {
+        return require __DIR__ . '/../docs/api.php';
     }
 }
