@@ -54,13 +54,17 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
   at request time (rebound per request by the core AuthMiddleware).
 - DB-backed tests skip without `TDS_TEST_DB_DSN`; the committed test covers
   routes + RBAC + payload validation without a DB.
-- **`renderMarkdown` is the extension's XSS boundary and is exported for the
-  suite.** Its output goes straight into `dangerouslySetInnerHTML` in the editor
-  preview. It is escape-FIRST (every text run is HTML-escaped before any md
-  transform), which is what lets this package skip dompurify — see the root
-  `CLAUDE.md`. **`safeHref` must not escape again**: `inlineMd` already receives
-  escaped text, so a second pass double-encoded ampersands and every link with a
-  query string (`?a=1&b=2`) resolved to the wrong URL. Fixed in 0.1.24.
+- **`renderMarkdown` lives in tds-shared now** (`@tracht-digital-solutions/tds-shared/markdown`,
+  `>=0.20.2`), not in `islands/BlogsList.tsx`. The customer wiki renders handbook
+  articles with the same function, and an XSS boundary must not exist twice. Its
+  test suite moved with it (`src/markdown/markdown.test.ts` over there) — do not
+  re-inline a local copy here.
+  It is escape-FIRST (every text run is HTML-escaped before any md transform),
+  which is what lets the panel skip dompurify — see the root `CLAUDE.md`. The
+  hard-won detail, if you ever touch it: **`safeHref` must not escape again**,
+  because `inlineMd` already receives escaped text, and a second pass
+  double-encoded ampersands so every link with a query string (`?a=1&b=2`)
+  resolved to the wrong URL. Fixed in 0.1.24, carried over in the move.
 - **Outcomes are toasts; a CONFIGURATION problem is not an outcome.** Saves,
   deletes, the rebuild trigger and the translation backfill report through
   `toast` (tds-shared `>=0.16.0`) — but a 503 "DeepL not configured" / 503 "no
@@ -74,11 +78,12 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
 
 `npm run test:run` (vitest; jsdom per-file via a `@vitest-environment` docblock).
 
-- `islands/markdown.test.ts` — the escape-first renderer, and the bulk of the
-  value here: script/img/iframe payloads stay inert text, the href allow-list
-  refuses `javascript:`/`data:`/`vbscript:`, and no tag outside the emitted
-  allow-list ever reaches the DOM. If one of these fails, admin markdown can
-  execute in the frontend.
+- The escape-first renderer's own suite now lives in **tds-shared**
+  (`src/markdown/markdown.test.ts`), because the function does: script/img/iframe
+  payloads stay inert text, the href allow-list refuses
+  `javascript:`/`data:`/`vbscript:`, and no tag outside the emitted allow-list
+  ever reaches the DOM. If one of those fails, admin markdown can execute in the
+  frontend — of two products now, not one.
 - `islands/BlogsList.test.tsx` — blog + post CRUD through the real UI against a
   URL/method-matching fetch stub, so each test asserts the exact request the PHP
   module receives (payload trimming, the `?lang=` on delete, the 503/422 status
@@ -139,7 +144,8 @@ Verified by mutation: 23 deliberate breakages introduced, 23 caught.
   the core fields) but keeps `tags` identical across languages (stable keyword
   tokens). Migration `AddBlogCmsSeo`.
 - **CP7:** a **markdown preview pane** in the editor (Vorschau/Bearbeiten toggle).
-  Uses a tiny **escape-first** renderer (`renderMarkdown` in `islands/BlogsList.tsx`):
+  Uses a tiny **escape-first** renderer (`renderMarkdown`, since 0.1.31 from
+  `@tracht-digital-solutions/tds-shared/markdown`):
   every text run is HTML-escaped *before* any markdown transform, so raw HTML /
   `<script>` in the body become inert text and link hrefs are allowlisted
   (http/https/mailto/relative only) — **safe by construction, no marked/dompurify
