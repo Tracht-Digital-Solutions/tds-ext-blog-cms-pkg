@@ -50,6 +50,26 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
   **version prefixes are globally unique** (this module owns the `20260728*`
   band) — every composed module's migrations share one `phinxlog`, so a reused
   class name OR version collides. Keep new migrations in this band.
+- **`BlogCmsSeedPosts` (`20260728000007`) ships the six launch articles, DE + EN.**
+  A fresh installation has **no `blog` row at all** — nothing creates one except an
+  operator clicking through `/blogs`, and until then `defaultBlog()` is null and
+  `/content/blog` answers `{"posts": []}` forever. So the seed creates the default
+  blog when none exists (reusing an existing one rather than adding a second the
+  public read would never see), seeds the `blog_author` byline, and writes the
+  posts with **`draft = 0` plus a non-null `published_at`** — miss either and the
+  rows exist but are invisible, with no error anywhere.
+  Three properties to preserve when editing it:
+  - **The English rows carry `machine_translated = 0`.** They are hand-written.
+    Flagged as machine-translated, `Service\TranslationSync` overwrites every one
+    of them with DeepL output the next time somebody saves the German article,
+    and the frontend labels hand-written prose as machine-translated.
+  - **Idempotent by `(blog_id, slug, lang)`**, and `down()` deletes only rows
+    still carrying the seeded title *and* body verbatim — an operator's edits
+    survive a rollback. `down()` deliberately keeps the blog and author rows.
+  - **The slugs are mirrored in `tds-landingpage-frontend`** (`lib/content.ts`'s
+    `topicFallback` and tds-shared's `blog.posts` fallback teasers). Renaming a
+    slug here without changing those publishes links to 404s, and nothing in
+    either build checks it.
 - Routes are closures resolving `UserContext`/`BlogRepository` from the container
   at request time (rebound per request by the core AuthMiddleware).
 - DB-backed tests skip without `TDS_TEST_DB_DSN`; the committed test covers
