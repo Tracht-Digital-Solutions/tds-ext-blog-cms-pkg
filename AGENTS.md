@@ -236,3 +236,25 @@ by `"<METHOD> <pattern>"`. Two things to know before editing a route:
   renaming a route without touching `docs/api.php` fails there. That is the
   point: prose next to code rots, and a reference full of confident, wrong
   detail is worse than the bare route list it replaced.
+
+## Site keys (`SiteKeyProtected`)
+
+This module implements the contract's optional `SiteKeyProtected` and declares
+`/content/blog`, `/content/topics`, `/content/snippets` — the routes the public
+blog and landingpage read at **build time**, and the only ones the base's
+site-key middleware may gate.
+
+- **Prefixes, not patterns.** `/content/blog` also covers `/content/blog/{slug}`
+  and `/content/blog/popular`. Protecting the listing while leaving every
+  article body open would be a gate in name only.
+- **Never widen to `/content`.** That also covers website-cms's
+  `/content/landing` and `/content/legal` — this module would be gating another
+  module's surface, and would stop doing so the day website-cms moved a route,
+  with nothing to notice.
+- **Never list a route a visitor's browser calls.** Nothing here is one, and
+  that is the property to preserve: a browser has no key and never will, so the
+  first such entry turns `enforce` into an outage on the public site.
+- `php/tests/BlogCmsApiDocsTest.php` asserts every declared prefix still covers
+  a mounted route, and that none of them reaches an `/admin` route. Same rot as
+  the doc parity beside it, worse symptom: an orphaned prefix does not leave a
+  blank row, it leaves an **unprotected route** that looks deliberate.

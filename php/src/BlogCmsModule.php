@@ -15,6 +15,7 @@ use Tds\Frontend\Contract\AbstractModule;
 use Tds\Frontend\Contract\ApiDocSource;
 use Tds\Frontend\Contract\PermissionDef;
 use Tds\Frontend\Contract\SettingsStore;
+use Tds\Frontend\Contract\SiteKeyProtected;
 use Tds\Frontend\Contract\UserContext;
 
 /**
@@ -23,7 +24,7 @@ use Tds\Frontend\Contract\UserContext;
  * (`blog:read`/`blog:write`, admins bypass); data via the core PDO. A save
  * triggering a static-blog rebuild lands in a later checkpoint.
  */
-final class BlogCmsModule extends AbstractModule implements ApiDocSource
+final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKeyProtected
 {
     private const LANGS = ['de', 'en'];
 
@@ -533,5 +534,30 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource
     public function apiDocs(): array
     {
         return require __DIR__ . '/../docs/api.php';
+    }
+
+    /**
+     * The routes the public blog + landingpage read at BUILD time, and the only
+     * ones a site key may be required for.
+     *
+     * Prefixes, not patterns — `/content/blog` also covers
+     * `/content/blog/{slug}` and `/content/blog/popular`, which is what we want:
+     * protecting the listing while leaving every article body open would be a
+     * gate in name only.
+     *
+     * Deliberately NOT `/content`: that would also cover website-cms's
+     * `/content/landing` and `/content/legal`, i.e. this module would silently
+     * be gating another module's surface — and would stop doing so the day
+     * website-cms moved its routes, with nothing to notice.
+     *
+     * Nothing here is read by a visitor's browser. The contact form, the
+     * live-chat widget and the account menu all live on other paths; listing one
+     * of those would turn `enforce` into an outage on the public site.
+     *
+     * @return list<string>
+     */
+    public function siteKeyRoutes(): array
+    {
+        return ['/content/blog', '/content/topics', '/content/snippets'];
     }
 }
