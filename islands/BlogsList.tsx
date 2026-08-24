@@ -12,6 +12,15 @@ interface Blog {
   name: string;
   rebuild_repo?: string | null;
   rebuild_workflow?: string | null;
+  /**
+   * Origin of the public blog whose page cache a save rebuilds.
+   *
+   * Separate from the rebuild pair above and not interchangeable with it: a
+   * full rebuild dispatches a CI build, re-runs the DeepL translations and
+   * re-renders one OG card per post. This re-renders the handful of pages one
+   * article dates.
+   */
+  cache_url?: string | null;
 }
 
 interface PostMeta {
@@ -151,6 +160,8 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
   const [rebuildRepo, setRebuildRepo] = useState(blog.rebuild_repo ?? "");
   const [rebuildWorkflow, setRebuildWorkflow] = useState(blog.rebuild_workflow ?? "dev.yml");
   const [rebuildStatus, setRebuildStatus] = useState<string | null>(null);
+  const [cacheUrl, setCacheUrl] = useState(blog.cache_url ?? "");
+  const [cacheStatus, setCacheStatus] = useState<string | null>(null);
   const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
   const [authors, setAuthors] = useState<Author[]>([]);
 
@@ -182,10 +193,41 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
     const res = await api(`/blogs/${blog.blog_key}/rebuild-config`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rebuild_repo: rebuildRepo.trim(), rebuild_workflow: rebuildWorkflow.trim() }),
+      body: JSON.stringify({
+        rebuild_repo: rebuildRepo.trim(),
+        rebuild_workflow: rebuildWorkflow.trim(),
+        cache_url: cacheUrl.trim(),
+      }),
     });
     if (res.ok) toast.success("Rebuild-Konfiguration gespeichert.");
     else toast.danger(`Rebuild-Konfiguration konnte nicht gespeichert werden (HTTP ${res.status}).`);
+  };
+
+  /**
+   * Re-render the public blog's cached pages.
+   *
+   * `slug` narrows it to one article and the pages that list it — the case the
+   * whole page cache exists for, since a correction to one paragraph used to
+   * cost a rebuild of the entire corpus.
+   */
+  const rebuildCache = async (slug?: string) => {
+    setCacheStatus("Seiten-Cache wird neu gebaut …");
+    const res = await api(`/blogs/${blog.blog_key}/cache/rebuild`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(slug ? { slug } : {}),
+    });
+    if (res.ok) {
+      setCacheStatus(null);
+      toast.success(slug ? `Seiten-Cache für „${slug}" wird neu gebaut.` : "Seiten-Cache wird neu gebaut.");
+    } else if (res.status === 422) {
+      // A persistent configuration gap, so it stays on screen: a vanishing
+      // message would leave the operator pressing a button that can never work.
+      setCacheStatus("Für diesen Blog ist keine Cache-Adresse hinterlegt.");
+    } else {
+      setCacheStatus(null);
+      toast.danger(`Cache-Neubau fehlgeschlagen (HTTP ${res.status}).`);
+    }
   };
 
   const rebuildNow = async () => {
@@ -285,6 +327,20 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
                 ) : null}
                 {p.author_name ? <span className="text-xs opacity-60"> · {p.author_name}</span> : null}
               </button>
+              {/* Per article, because that is the case this whole mechanism
+                  exists for: correcting one paragraph used to cost a rebuild
+                  of every page in the corpus. Draft rows get no button —
+                  nothing of theirs is public to rebuild. */}
+              {p.draft ? null : (
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => rebuildCache(p.slug)}
+                  title="Nur die Seiten dieses Beitrags neu rendern"
+                >
+                  Cache neu bauen
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -325,6 +381,32 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
         <div className="flex flex-wrap gap-2">
           <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
           <button className="btn btn-primary" type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
+        </div>
+      </div>
+
+      <div className="blog-rebuild">
+        <h3>Seiten-Cache</h3>
+        <p className="marginalia">
+          Der öffentliche Blog rendert auf Anfrage und legt jede Seite als Datei ab.
+          Ein veröffentlichter Beitrag baut den Cache seiner Seiten automatisch neu —
+          dieser Knopf ist für den Fall, dass etwas dazwischenkam.
+          {" "}
+          <strong>Nicht dasselbe wie „Jetzt neu bauen"</strong>: das stößt einen CI-Build
+          an, lässt die Übersetzungen erneut laufen und rendert je Beitrag eine OG-Karte
+          neu. Der Cache-Neubau braucht Sekunden.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <input className="field-boxed"
+            value={cacheUrl}
+            onChange={(e) => setCacheUrl(e.target.value)}
+            placeholder="https://blog.tracht-digital.de"
+            aria-label="Adresse des öffentlichen Blogs"
+          />
+        </div>
+        {cacheStatus ? <p className="tds-alert" role="status">{cacheStatus}</p> : null}
+        <div className="flex flex-wrap gap-2">
+          <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Adresse speichern</button>
+          <button className="btn btn-accent" type="button" onClick={() => rebuildCache()}>Seiten-Cache neu bauen</button>
         </div>
       </div>
     </div>
