@@ -11,10 +11,13 @@ use Tds\Ext\BlogCms\Domain\BlogRepository;
 use Tds\Ext\BlogCms\Service\DeeplTranslator;
 use Tds\Ext\BlogCms\Service\RebuildTrigger;
 use Tds\Ext\BlogCms\Service\TranslationSync;
+use Psr\Container\ContainerInterface;
 use Tds\Frontend\Contract\AbstractModule;
 use Tds\Frontend\Contract\ApiDocSource;
+use Tds\Frontend\Contract\CacheEvent;
 use Tds\Frontend\Contract\PermissionDef;
 use Tds\Frontend\Contract\SettingsStore;
+use Tds\Frontend\Contract\SiteCache;
 use Tds\Frontend\Contract\SiteKeyProtected;
 use Tds\Frontend\Contract\UserContext;
 
@@ -310,6 +313,12 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             // A published (non-draft) save re-bakes the static blog; drafts don't.
             if (!$draft) {
                 self::fireRebuild($c->get(RebuildTrigger::class), $blog, 'post ' . (string) $args['slug'] . ' saved');
+                // Both languages when the counterpart was machine-translated in
+                // the same call: the English article changed too, and rebuilding
+                // only the saved language leaves it showing the old translation.
+                self::fireCache($c, $blog, [$translated
+                    ? new CacheEvent('post', (string) $args['slug'])
+                    : new CacheEvent('post', (string) $args['slug'], $lang)]);
             }
             return self::json($res, ['ok' => true, 'translated' => $translated]);
         });
@@ -330,7 +339,20 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             if ($repoName !== '' && preg_match('#^[\w.-]+/[\w.-]+$#', $repoName) !== 1) {
                 return self::json($res, ['error' => 'rebuild_repo must be "owner/name"'], 422);
             }
-            $repo->updateBlogRebuild((int) $blog['id'], $repoName !== '' ? $repoName : null, $workflow !== '' ? $workflow : null);
+            // The page-cache origin lives on the same form. Validated as a real
+            // http(s) URL rather than accepted as typed: a half-pasted value
+            // would make every save log a failure nobody reads while the panel
+            // reported success.
+            $cacheUrl = trim((string) ($body['cache_url'] ?? ''));
+            if ($cacheUrl !== '' && preg_match('#^https?://\S+$#', $cacheUrl) !== 1) {
+                return self::json($res, ['error' => 'cache_url must be an http(s) URL'], 422);
+            }
+            $repo->updateBlogRebuild(
+                (int) $blog['id'],
+                $repoName !== '' ? $repoName : null,
+                $workflow !== '' ? $workflow : null,
+                $cacheUrl !== '' ? rtrim($cacheUrl, '/') : null,
+            );
             return self::json($res, ['ok' => true]);
         });
 
@@ -398,8 +420,36 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             }
             if ($created > 0) {
                 self::fireRebuild($c->get(RebuildTrigger::class), $blog, 'translation backfill');
+                self::fireCache($c, $blog, [new CacheEvent('post')]);
             }
             return self::json($res, ['created' => $created, 'skipped' => $skipped]);
+        });
+
+        // Rebuild a blog's PAGE CACHE ("Seiten-Cache neu bauen").
+        //
+        // Not the same button as /rebuild above: that dispatches a CI build,
+        // re-runs the DeepL translations and re-renders one OG card per post.
+        // This re-renders pages from content that is already stored. An editor
+        // wants this one; it takes seconds.
+        $app->post('/blogs/{blog:[a-z0-9-]+}/cache/rebuild', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'blog:write', $res)) !== null) {
+                return $deny;
+            }
+            $repo = $c->get(BlogRepository::class);
+            $blog = $repo->findBlog((string) $args['blog']);
+            if ($blog === null) {
+                return self::json($res, ['error' => 'Blog not found'], 404);
+            }
+            if (trim((string) ($blog['cache_url'] ?? '')) === '') {
+                // Said in the flow rather than reported as a cheerful success:
+                // a rebuild nobody sent looks exactly like one that worked.
+                return self::json($res, ['error' => 'No cache URL configured for this blog'], 422);
+            }
+            $body = (array) $req->getParsedBody();
+            $slug = isset($body['slug']) ? trim((string) $body['slug']) : '';
+            $lang = isset($body['lang']) ? self::lang($body['lang']) : null;
+            self::fireCache($c, $blog, [new CacheEvent('post', $slug !== '' ? $slug : null, $lang)]);
+            return self::json($res, ['ok' => true], 202);
         });
 
         $app->delete('/blogs/{blog:[a-z0-9-]+}/posts/{slug:[a-z0-9-]+}', function (Request $req, Response $res, array $args) use ($c): Response {
@@ -416,11 +466,44 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             // A machine-translated counterpart was derived from this row — drop it too.
             $c->get(TranslationSync::class)->afterDelete((int) $blog['id'], (string) $args['slug'], $lang);
             self::fireRebuild($c->get(RebuildTrigger::class), $blog, 'post ' . (string) $args['slug'] . ' deleted');
+            self::fireCache($c, $blog, [new CacheEvent('post', (string) $args['slug'], $lang)]);
             return self::json($res, ['ok' => true]);
         });
     }
 
     // --- helpers ---------------------------------------------------------------
+
+    /**
+     * Ask the public blog to re-render the pages a content change affects.
+     *
+     * Never throws and never fails the save: a site that is down, moved or not
+     * configured yet must not turn "publish this article" into an error. The
+     * article is stored either way and the panel has a rebuild button.
+     *
+     * `has()` is legitimate here because SiteCache is an INTERFACE — the base
+     * either bound an implementation or it did not. On a concrete class the
+     * same check always answers true (PHP-DI autowires), which is the trap the
+     * binding comments in this module document.
+     *
+     * @param array<string,mixed> $blog
+     * @param CacheEvent[] $events
+     */
+    private static function fireCache(ContainerInterface $c, array $blog, array $events): void
+    {
+        if (!$c->has(SiteCache::class) || $events === []) {
+            return;
+        }
+        $url = trim((string) ($blog['cache_url'] ?? ''));
+        if ($url === '') {
+            return;
+        }
+        $token = self::setting($c)?->getSecret('blog-cms', 'cache_token');
+        if ($token === null || $token === '') {
+            $token = (string) (getenv('BLOG_CACHE_TOKEN') ?: '');
+        }
+
+        $c->get(SiteCache::class)->rebuild($url, $token, $events);
+    }
 
     /** @param array<string,mixed> $blog */
     private static function fireRebuild(RebuildTrigger $trigger, array $blog, string $reason): void

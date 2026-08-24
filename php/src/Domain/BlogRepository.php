@@ -42,12 +42,21 @@ final class BlogRepository
         return $row === false ? null : $row;
     }
 
-    public function updateBlogRebuild(int $blogId, ?string $repo, ?string $workflow): void
+    /**
+     * The blog's deploy hook and its page-cache origin.
+     *
+     * Two different jobs kept in one call because they sit on one form:
+     * `repo`/`workflow` dispatch a CI build and ship code, `cacheUrl` is the
+     * origin a save asks to re-render the pages one article dates. A full
+     * build here also re-runs the DeepL translations and one OG card per post,
+     * which is exactly why a typo correction must not need one.
+     */
+    public function updateBlogRebuild(int $blogId, ?string $repo, ?string $workflow, ?string $cacheUrl = null): void
     {
         $stmt = $this->pdo->prepare(
-            'UPDATE blog SET rebuild_repo = :r, rebuild_workflow = :w WHERE id = :id'
+            'UPDATE blog SET rebuild_repo = :r, rebuild_workflow = :w, cache_url = :c WHERE id = :id'
         );
-        $stmt->execute([':r' => $repo, ':w' => $workflow, ':id' => $blogId]);
+        $stmt->execute([':r' => $repo, ':w' => $workflow, ':c' => $cacheUrl, ':id' => $blogId]);
     }
 
     public function blogKeyExists(string $blogKey): bool

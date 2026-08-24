@@ -285,13 +285,14 @@ return [
             $blog,
             ['in' => 'body', 'name' => 'rebuild_repo', 'type' => 'string', 'description' => 'Muss `owner/name` sein. Leer löscht.'],
             ['in' => 'body', 'name' => 'rebuild_workflow', 'type' => 'string', 'description' => 'Dateiname des Workflows.'],
+            ['in' => 'body', 'name' => 'cache_url', 'type' => 'string', 'description' => 'Herkunft der öffentlichen Site für den Seiten-Cache (z. B. `https://blog.tracht-digital.de`). Leer löscht.'],
         ],
         'responses' => [
             ['status' => 200, 'description' => '`{ok: true}`'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `blog:write`.'],
             ['status' => 404, 'description' => 'Unbekannter Blog.'],
-            ['status' => 422, 'description' => '`rebuild_repo` ist nicht `owner/name`.'],
+            ['status' => 422, 'description' => '`rebuild_repo` ist nicht `owner/name`, oder `cache_url` ist keine http(s)-URL.'],
         ],
     ],
     [
@@ -311,6 +312,31 @@ return [
             ['status' => 404, 'description' => 'Unbekannter Blog.'],
             ['status' => 422, 'description' => 'Für diesen Blog ist kein Rebuild-Repository konfiguriert.'],
             ['status' => 503, 'description' => 'Kein Rebuild-Token konfiguriert.'],
+        ],
+    ],
+    [
+        'method' => 'POST',
+        'pattern' => '/blogs/{blog:[a-z0-9-]+}/cache/rebuild',
+        'tag' => 'Rebuild',
+        'summary' => 'Seiten-Cache eines Blogs neu bauen',
+        'description' => 'Nicht zu verwechseln mit `/rebuild`: das stößt einen CI-Build an, '
+            . 'lässt die DeepL-Übersetzungen erneut laufen und rendert je Beitrag eine '
+            . 'OG-Karte neu. Das hier rendert Seiten aus bereits gespeichertem Inhalt — '
+            . 'Sekunden statt Minuten, und der Weg, den eine Redakteurin nimmt. Ohne '
+            . '`slug` werden die Übersichts- und Archivseiten erfasst, mit `slug` '
+            . 'zusätzlich der Artikel samt seiner Kategorie-, Tag- und Autorenseiten.',
+        'permission' => 'blog:write',
+        'params' => [
+            $blog,
+            ['in' => 'body', 'name' => 'slug', 'type' => 'string', 'description' => 'Nur diesen Beitrag (und was ihn listet) neu bauen.'],
+            ['in' => 'body', 'name' => 'lang', 'type' => 'string', 'description' => '`de` oder `en`; ohne Angabe beide Sprachbäume.'],
+        ],
+        'responses' => [
+            ['status' => 202, 'description' => '`{ok: true}` — der Neubau wurde angefragt. Der Aufruf scheitert nie an einer nicht erreichbaren Site.'],
+            ['status' => 401, 'description' => 'Keine Sitzung.'],
+            ['status' => 403, 'description' => 'Kein `blog:write`.'],
+            ['status' => 404, 'description' => 'Unbekannter Blog.'],
+            ['status' => 422, 'description' => 'Für diesen Blog ist keine Cache-URL konfiguriert.'],
         ],
     ],
     [
