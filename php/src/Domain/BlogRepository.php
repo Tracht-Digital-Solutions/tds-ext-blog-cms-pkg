@@ -22,7 +22,7 @@ final class BlogRepository
     public function blogs(): array
     {
         return $this->pdo->query(
-            'SELECT id, blog_key, name, rebuild_repo, rebuild_workflow, updated_at FROM blog ORDER BY name, id'
+            'SELECT id, blog_key, name, rebuild_repo, rebuild_workflow, cache_url, updated_at FROM blog ORDER BY name, id'
         )->fetchAll();
     }
 
@@ -35,7 +35,7 @@ final class BlogRepository
     public function findBlog(string $blogKey): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, blog_key, name, rebuild_repo, rebuild_workflow FROM blog WHERE blog_key = :k LIMIT 1'
+            'SELECT id, blog_key, name, rebuild_repo, rebuild_workflow, cache_url FROM blog WHERE blog_key = :k LIMIT 1'
         );
         $stmt->execute([':k' => $blogKey]);
         $row = $stmt->fetch();

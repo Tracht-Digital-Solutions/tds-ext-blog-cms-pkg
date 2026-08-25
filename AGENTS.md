@@ -16,6 +16,17 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
 - **`set:html` on the body stays unsanitised only while admin-authored + baked at
   build** — add `isomorphic-dompurify` the day a non-admin can write a body or a
   client preview ships (carried from content-api/tds-admin).
+- **Registration and writing are separate surfaces.** Blogs are created and
+  connected only under *Einstellungen → Blog-CMS* (`BlogRegistry`); `/blog` is
+  the daily content surface and only selects a blog, selects an article and
+  edits it. Do not move repository, workflow or cache-origin fields back beside
+  the article list.
+- **Panel reads are stale-while-revalidate.** The blog registry, blog picker,
+  article list and author list use tds-shared's `./data` entry point (available
+  since `0.33.0`). Cached rows paint immediately on a return navigation, wear
+  `tds-stale` plus `aria-busy` while refreshing, and remain visible with an
+  explicit warning if the refresh fails. A failed refresh must never become a
+  calm empty list.
 
 ## Gotchas
 
@@ -64,6 +75,21 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
   The island tests match on the request PATH (`pathOf()`), which a relative
   fetch satisfies just as well — so one assertion per suite pins the **absolute
   host**. That is the line that fails if this ever regresses.
+
+- **The page cache needs both values, and success means "requested".** Each
+  `blog` row carries `cache_url`; the shared secret is settings-store key
+  `blog-cms/cache_token` with `BLOG_CACHE_TOKEN` as env fallback. Both
+  `BlogRepository::blogs()` and `findBlog()` must SELECT `cache_url`: omitting it
+  makes every save and manual rebuild a silent no-op even though the migration
+  and update route work. `CacheOrigin` accepts only a pure http(s) origin — no
+  userinfo, path, query or fragment — because the cache token is sent there.
+  The module sends content events through the core
+  `SiteCache` (`post` + slug + optional language), never URLs. `fireCache()`
+  returns whether a request was actually dispatched; the save response exposes
+  that as `cached`, and the manual route returns 503 instead of 202 when token
+  or base binding is absent. The transport is best-effort and deliberately
+  cannot prove that the public site finished rendering, so UI copy says the
+  rebuild was **requested**, not completed.
 
 
 - **Public read surface (UNAUTHENTICATED).** Alongside the admin (`blog:read`/
@@ -131,8 +157,8 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
   fail when a route gains or loses documentation.
 - **The suites used to run against a tds-shared a dozen minors old, and the
   first honest run cost 30 failures across the twelve shipping extensions.**
-  This package declares tds-shared as a **peer** with a `>=0.19.0` floor, so a
-  fresh install resolved 0.19.0 while every product build composes the current
+  This package once declared tds-shared as a **peer** with a `>=0.19.0` floor, so a
+  fresh install resolved 0.19.0 while every product build composed the current
   one. Three separate behaviours had moved underneath the tests, and each is
   worth knowing because a new suite will hit them again:
   - `apiFetch` consults the host-side runtime config (`/tds-runtime.json`)
@@ -147,6 +173,8 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
     `undefined`. Identical to the browser — the boundary is still the
     browser's to set — so assert "no content-type header", never
     "headers is undefined".
+  The floor is now `>=0.33.0`, because that is the first release exporting the
+  SWR cache at `@tracht-digital-solutions/tds-shared/data`.
 
 
 `npm run test:run` (vitest; jsdom per-file via a `@vitest-environment` docblock).
@@ -160,7 +188,11 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
 - `islands/BlogsList.test.tsx` — blog + post CRUD through the real UI against a
   URL/method-matching fetch stub, so each test asserts the exact request the PHP
   module receives (payload trimming, the `?lang=` on delete, the 503/422 status
-  copy).
+  copy), plus blog/article selection, targeted cache requests and honest
+  save/cache outcomes.
+- `islands/BlogRegistry.test.tsx` — the settings-only blog registry: immutable
+  key validation, per-blog rebuild/cache configuration and the deliberately
+  separate CI-build versus page-cache routes.
 - `islands/BlogSettings.test.tsx` — the masked-secret contract: a secret never
   round-trips to the DOM, and a **blank** secret on save means *keep*, so an
   admin toggling auto-translate cannot wipe the DeepL key.
@@ -180,14 +212,15 @@ Verified by mutation: 23 deliberate breakages introduced, 23 caught.
   — "Neuer Beitrag" / open a post (slug + lang → GET), edit title/category/excerpt/
   cover-hint + a markdown body textarea, toggle draft↔publish, save via PUT, delete via
   DELETE. Slug + lang lock when editing an existing post (they're the row identity).
-- **CP3:** save-triggered **static-blog rebuild**. `Service\RebuildTrigger` (plain
+- **CP3:** save-triggered **repository rebuild**. `Service\RebuildTrigger` (plain
   ext-curl, best-effort, never throws) fires a GitHub `workflow_dispatch` after a
   **published** post is saved (drafts don't rebuild) or a post is deleted. Per-blog
   target on `blog` (`rebuild_repo` "owner/name" + `rebuild_workflow`, default
   `dev.yml`), edited via `PUT /blogs/{blog}/rebuild-config`; the shared PAT is
   `BLOG_REBUILD_TOKEN` (one PAT dispatches every blog repo; unset ⇒ no-op).
   `POST /blogs/{blog}/rebuild` is a manual "Jetzt neu bauen" (503 no token / 422 no
-  repo). Sends `ref` only. UI: a Rebuild-Konfiguration block under the post list.
+  repo). Sends `ref` only. UI: the rebuild configuration lives in
+  *Einstellungen → Blog-CMS*, never beside the article list.
 - **CP4:** **DeepL auto-translation** (save-time sync, ported from tds-content-api).
   `blog_post.machine_translated` flags auto-generated rows. On a **published** post
   save, `Service\TranslationSync` translates title/excerpt/category (plain) + body
@@ -226,14 +259,15 @@ Verified by mutation: 23 deliberate breakages introduced, 23 caught.
   preview). Covers fenced/inline code, headings, bold, italic, links, unordered
   lists, paragraphs; the public blog still uses the full build-time pipeline.
 - **CP8:** **runtime settings store adoption.** The DeepL key + auto-translate flag
-  + rebuild token are now read **DB-first with env fallback** via the core's
+  + rebuild token + page-cache token are now read **DB-first with env fallback** via the core's
   `SettingsStore` (contract interface, resolved from the container; null in isolated
-  tests ⇒ env-only). Namespace `blog-cms`, keys `deepl_api_key`/`rebuild_token`
-  (secret, AES-GCM-encrypted by the core) + `auto_translate` (flag). The settings
+  tests ⇒ env-only). Namespace `blog-cms`, keys `deepl_api_key`/`rebuild_token`/
+  `cache_token` (secret, AES-GCM-encrypted by the core) + `auto_translate` (flag). The settings
   slot (`islands/Settings.astro` → `BlogSettings` island) reads/writes the core admin
   API `/admin/settings/blog-cms` (masked: `configured`+`last4`; blank secret = keep).
   Env vars (`BLOG_DEEPL_API_KEY`/`DEEPL_API_KEY`, `BLOG_AUTO_TRANSLATE`,
-  `BLOG_REBUILD_TOKEN`) remain the fallback, so existing deployments keep working.
+  `BLOG_REBUILD_TOKEN`, `BLOG_CACHE_TOKEN`) remain the fallback, so existing
+  deployments keep working.
 - **CP9:** **authors tied to frontend users.** `blog_author.user_id` (nullable,
   unsigned, unique — NOT a DB FK; app_user lives in another service, same rule as
   the ticket refs) links a byline to a tds-auth-api user; the row stays a SNAPSHOT
@@ -244,6 +278,14 @@ Verified by mutation: 23 deliberate breakages introduced, 23 caught.
   (`isBlogAuthor || isAdmin`), and imports them as authors (a "Frontend-Nutzer" chip
   marks linked ones); free-form add stays for guests. Falls back gracefully when
   `/auth/admin/users` is unreachable.
+- **CP10:** **settings-only blog registry + SWR content workflow.** `BlogRegistry`
+  under Einstellungen owns blog creation, CI target and public cache origin.
+  `/blog` auto-selects the sole blog or shows a picker, then selects/edits an
+  article. Blog/article/author reads use the shared in-memory SWR cache and mark
+  old data honestly during refresh. A published save sends one `CacheEvent`
+  for the article (both language trees when the save also rewrote the machine
+  translation), and the API's `cached` boolean drives the save toast instead of
+  the UI inferring a rebuild from HTTP 200.
 - **TODO (next):** the website-cms equivalent has no author concept (blocks, not
   posts); a markdown preview is done. Larger: per-section structured CMS forms.
 

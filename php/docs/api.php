@@ -234,7 +234,13 @@ return [
             . 'Blogs an** — ein Entwurf nicht. `published_at` wird beim ersten '
             . 'Veröffentlichen automatisch gesetzt. Eine unbekannte `author_id` wird '
             . 'stillschweigend verworfen statt die Anfrage abzulehnen: eine gelöschte '
-            . 'Byline soll das Speichern nicht blockieren.',
+            . 'Byline soll das Speichern nicht blockieren.'
+            . "\n\n" . 'Der Seiten-Cache wird **artikelgenau** neu gebaut: gemeldet wird '
+            . 'genau dieser Beitrag (`{type:"post", id:"<slug>"}`), und welche Seiten das '
+            . 'sind — Artikelseite, Übersicht, Kategorie, Schlagwort, Autor, Feed — '
+            . 'entscheidet der öffentliche Blog anhand seiner eigenen Routen-Tabelle. '
+            . 'Wurde die Gegensprache im selben Aufruf maschinell übersetzt, entfällt die '
+            . 'Sprachangabe, damit auch der englische Artikel neu gerendert wird.',
         'permission' => 'blog:write',
         'params' => [
             $blog,
@@ -252,7 +258,10 @@ return [
             ['in' => 'body', 'name' => 'published_at', 'type' => 'datetime', 'description' => 'Nur für Veröffentlichtes; leer ⇒ jetzt.'],
         ],
         'responses' => [
-            ['status' => 200, 'description' => '`{ok: true, translated: bool}` — `translated` sagt, ob die Gegensprache geschrieben wurde.'],
+            ['status' => 200, 'description' => '`{ok: true, translated: bool, cached: bool}` — '
+                . '`translated` sagt, ob die Gegensprache geschrieben wurde; `cached`, ob '
+                . 'wirklich ein Cache-Neubau rausgegangen ist. Ein Entwurf löst nie einen '
+                . 'aus, deshalb darf die Oberfläche das nicht aus `ok` ableiten.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `blog:write`.'],
             ['status' => 404, 'description' => 'Unbekannter Blog.'],
@@ -285,14 +294,14 @@ return [
             $blog,
             ['in' => 'body', 'name' => 'rebuild_repo', 'type' => 'string', 'description' => 'Muss `owner/name` sein. Leer löscht.'],
             ['in' => 'body', 'name' => 'rebuild_workflow', 'type' => 'string', 'description' => 'Dateiname des Workflows.'],
-            ['in' => 'body', 'name' => 'cache_url', 'type' => 'string', 'description' => 'Herkunft der öffentlichen Site für den Seiten-Cache (z. B. `https://blog.tracht-digital.de`). Leer löscht.'],
+            ['in' => 'body', 'name' => 'cache_url', 'type' => 'string', 'description' => 'Reine http(s)-Origin der öffentlichen Site (z. B. `https://blog.tracht-digital.de`). Userinfo, Pfad, Query und Fragment sind verboten; leer löscht.'],
         ],
         'responses' => [
             ['status' => 200, 'description' => '`{ok: true}`'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `blog:write`.'],
             ['status' => 404, 'description' => 'Unbekannter Blog.'],
-            ['status' => 422, 'description' => '`rebuild_repo` ist nicht `owner/name`, oder `cache_url` ist keine http(s)-URL.'],
+            ['status' => 422, 'description' => '`rebuild_repo` ist nicht `owner/name`, oder `cache_url` ist keine reine http(s)-Origin.'],
         ],
     ],
     [
@@ -332,11 +341,12 @@ return [
             ['in' => 'body', 'name' => 'lang', 'type' => 'string', 'description' => '`de` oder `en`; ohne Angabe beide Sprachbäume.'],
         ],
         'responses' => [
-            ['status' => 202, 'description' => '`{ok: true}` — der Neubau wurde angefragt. Der Aufruf scheitert nie an einer nicht erreichbaren Site.'],
+            ['status' => 202, 'description' => '`{ok: true, cached: true}` — der Neubau wurde angefragt. Der Aufruf scheitert nie an einer nicht erreichbaren Site.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `blog:write`.'],
             ['status' => 404, 'description' => 'Unbekannter Blog.'],
             ['status' => 422, 'description' => 'Für diesen Blog ist keine Cache-URL konfiguriert.'],
+            ['status' => 503, 'description' => 'Die Cache-Anbindung ist nicht vollständig konfiguriert (Token oder Basisdienst fehlt).'],
         ],
     ],
     [

@@ -88,6 +88,10 @@ describe("dependency hygiene", () => {
     expect(range, "a file:/link: range never resolves for a consumer").not.toMatch(/^(file:|link:)/);
   });
 
+  it("requires the tds-shared release that exports the SWR data cache", () => {
+    expect(pkg.peerDependencies?.["@tracht-digital-solutions/tds-shared"]).toBe(">=0.33.0");
+  });
+
   it("stays inside the 0.1.x line the host pins with a caret", () => {
     // The host pins each extension `^0.1.x`; under 0.x a caret means
     // `>=0.1.x <0.2.0`, so a 0.2.0 here silently stops reaching the products.

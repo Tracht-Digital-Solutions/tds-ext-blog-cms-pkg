@@ -14,7 +14,8 @@ const api = apiFetch;
 const NS = "/admin/settings/blog-cms";
 
 /**
- * Blog-CMS settings section — DeepL key + auto-translate flag + rebuild token,
+ * Blog-CMS settings section — DeepL key + auto-translate flag + CI rebuild
+ * token + page-cache token,
  * persisted in the core's runtime settings store (`/admin/settings/blog-cms`,
  * admin-only). Secrets come back masked (configured + last4) and a blank secret
  * on save keeps the existing value, so the raw key never round-trips to the UI.
@@ -24,9 +25,11 @@ export default function BlogSettings() {
   const [loaded, setLoaded] = useState(false);
   const [deeplState, setDeeplState] = useState<Masked | null>(null);
   const [rebuildState, setRebuildState] = useState<Masked | null>(null);
+  const [cacheState, setCacheState] = useState<Masked | null>(null);
   const [autoTranslate, setAutoTranslate] = useState(true);
   const [deeplInput, setDeeplInput] = useState("");
   const [rebuildInput, setRebuildInput] = useState("");
+  const [cacheInput, setCacheInput] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -41,6 +44,7 @@ export default function BlogSettings() {
     const map = new Map<string, Masked>((d.settings ?? []).map((s: Masked) => [s.key, s]));
     setDeeplState(map.get("deepl_api_key") ?? null);
     setRebuildState(map.get("rebuild_token") ?? null);
+    setCacheState(map.get("cache_token") ?? null);
     const at = map.get("auto_translate");
     setAutoTranslate(at?.value !== "0");
     setLoaded(true);
@@ -56,6 +60,7 @@ export default function BlogSettings() {
     const settings: Masked[] = [
       { key: "deepl_api_key", secret: true, value: deeplInput.trim() },
       { key: "rebuild_token", secret: true, value: rebuildInput.trim() },
+      { key: "cache_token", secret: true, value: cacheInput.trim() },
       { key: "auto_translate", secret: false, value: autoTranslate ? "1" : "0" },
     ];
     const res = await api(NS, {
@@ -67,6 +72,7 @@ export default function BlogSettings() {
     if (res.ok) {
       setDeeplInput("");
       setRebuildInput("");
+      setCacheInput("");
       toast.success("Gespeichert.");
       void load();
     } else {
@@ -107,6 +113,24 @@ export default function BlogSettings() {
           autoComplete="off"
         />
       </label>
+
+      <label className="block">
+        <span className="text-sm">Seiten-Cache-Token <em className="opacity-60">({secretHint(cacheState)})</em></span>
+        <input className="field-boxed"
+          type="password"
+          value={cacheInput}
+          onChange={(e) => setCacheInput(e.target.value)}
+          placeholder="Neuen Token setzen (leer = behalten)"
+          autoComplete="off"
+        />
+      </label>
+      <p className="marginalia">
+        Das Kennwort, mit dem sich der Panel-Server beim öffentlichen Blog meldet, um nach
+        einer Veröffentlichung nur die Seiten dieses Artikels neu rendern zu lassen.
+        <strong> Ohne Token passiert nichts</strong> — ein unauthentifizierter Neubau wäre
+        auf einem öffentlichen Host ein kostenloser Render-DoS, also ist er absichtlich ein
+        No-Op. Dasselbe Token trägt der Blog in seiner eigenen Konfiguration.
+      </p>
 
       {/* The load failure stays in-flow (persistent state); the save outcome
           is a toast. Failures only, hence the danger hue. */}

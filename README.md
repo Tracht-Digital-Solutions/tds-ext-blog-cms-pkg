@@ -1,48 +1,86 @@
 # tds-ext-blog-cms-pkg
 
-The **Blog-CMS** as a frontend extension, ported from `tds-content-api`'s blog-post
-model. Edits blog posts (title / excerpt / body / draft / publish per **blog ×
-slug × language**); the static blogs fetch published posts at build time.
+Blog-CMS extension for the TDS panel platform. One panel can manage several
+blogs; every post is identified by **blog × slug × language** and can carry
+markdown, draft/publication state, SEO fields, a byline and a machine-generated
+counterpart language.
 
-**1:n blogs:** a `blog` registry lets one frontend manage several blogs; posts are
-scoped to a blog.
+## Panel workflow
 
-## Surface (checkpoint-1)
+- **Einstellungen → Blog-CMS** is the only place a blog is registered. It owns
+  the immutable blog key, display name, CI repository/workflow and public
+  page-cache origin. DeepL, CI and page-cache tokens are stored there as masked
+  runtime secrets.
+- **Blog-CMS → `/blog`** is the writing surface. It auto-selects the sole blog or
+  offers a blog picker, then lists articles and opens the selected article in the
+  markdown editor. Blog registration and deployment fields intentionally do not
+  appear here.
+- Blog, article and author reads use the shared in-memory stale-while-revalidate
+  cache. Returning to the screen paints the last rows immediately; while they
+  refresh they are dimmed/pulsing (`tds-stale`) and marked `aria-busy`. A failed
+  refresh keeps the old rows visible and labels them as possibly stale.
 
-- **Blogs:** `GET /blogs`, `POST /blogs` (`{blog_key, name}`), `GET /blog/summary`
-  (the "Blog-Beiträge" widget count).
-- **Posts:** `GET /blogs/{blog}/posts` (metadata list),
-  `GET /blogs/{blog}/posts/{slug}?lang=de`, `PUT /blogs/{blog}/posts/{slug}`
-  (upsert `{title, body, excerpt?, category?, draft?, lang?}`), `DELETE …`.
-- **Frontend:** nav "Blog-CMS" → `/blog`, the blogs list + add-blog form + a
-  blog's post list, the posts dashboard widget, DE/EN i18n.
-- **Public read (UNAUTHENTICATED)** — the successor to tds-content-api's open read
-  the public blog/landingpage SSG builds fetch: `GET /content/blog?lang=&limit=&cursor=`
-  (published list, `{posts, nextCursor}`), `GET /content/blog/popular`, `GET
-  /content/blog/{slug}?lang=`, `GET /content/topics` (null), `GET /content/snippets`
-  (`[]`). Published posts only (`draft=0`, `published_at NOT NULL`), camelCase `BlogPost`
-  shape, single public site → the default blog. Degrades to an empty payload on a DB
-  error (build-fetch fail-safe).
+## Page cache versus CI rebuild
 
-Auth: the admin routes need `blog:read`/`blog:write` from the core `UserContext` (admins
-bypass); the `/content/*` public read is ungated. Data via the core `PDO`.
+These are separate operations:
 
-## Still to port (later checkpoints)
+- A **page-cache rebuild** re-renders pages from content already stored. Saving
+  a published post emits a content event for that slug and language; if the same
+  save rewrites its machine translation, both language trees are requested. A
+  per-article catch-up button uses the same targeted route.
+- A **CI rebuild** dispatches the configured GitHub workflow and ships code or
+  design changes. It is slower and belongs in settings.
 
-The markdown post editor UI (create/edit + publish/draft + cover), a
-save-triggered static-blog rebuild (workflow_dispatch, per-blog config), blog
-authors, and DeepL auto-translation (as content-api's TranslationSync does).
+The page cache requires both `blog.cache_url` and the secret
+`blog-cms/cache_token` (`BLOG_CACHE_TOKEN` remains the environment fallback).
+`cache_url` is accepted only as a pure HTTP(S) origin; userinfo, paths, queries
+and fragments are rejected before the token can be sent.
+The API returns `cached: true` only when a request was actually dispatched. The
+transport is best-effort, so the panel says that a rebuild was *requested*; it
+does not claim that the public site has already finished rendering.
+
+## API surface
+
+- Registry and editor: `GET`/`POST /blogs`, `GET
+  /blogs/{blog}/posts`, `GET`/`PUT`/`DELETE
+  /blogs/{blog}/posts/{slug}`.
+- Authors and translation: `GET`/`POST /blog/authors`, `DELETE
+  /blog/authors/{id}`, `POST /blogs/{blog}/translations/backfill`.
+- Rebuild configuration/actions: `PUT /blogs/{blog}/rebuild-config`, `POST
+  /blogs/{blog}/cache/rebuild`, `POST /blogs/{blog}/rebuild`.
+- Dashboard: `GET /blog/summary`.
+- Public read (unauthenticated): `GET /content/blog`, `/content/blog/popular`,
+  `/content/blog/{slug}`, `/content/topics` and `/content/snippets`. Only
+  published rows are returned; database failures degrade to the documented
+  empty/fallback shapes for public-site fetches.
+
+Admin routes use the core `UserContext` permissions `blog:read` and
+`blog:write`; public read routes are ungated. Data comes from the core `PDO`.
+
+## Runtime requirements
+
+- `@tracht-digital-solutions/tds-shared >=0.33.0` for the `./data` SWR export.
+- `tracht-digital-solutions/tds-frontend-contract ^1.10.0` for `SiteCache` and
+  `CacheEvent`.
 
 ## Develop
 
 ```bash
-npm install        # pulls tds-frontend-contract from GitHub Packages (needs NPM_TOKEN)
-npm run build && npm run type-check
-composer install   # resolves tds-frontend-contract from its public VCS repo
-composer test      # phpunit — route/RBAC coverage; DB-backed tests skip without TDS_TEST_DB_DSN
+npm install
+npm run type-check
+npm run lint:primitives
+npm run test:run
+npm run build
+
+composer install
+composer test
 ```
+
+The PHP suite does not require a live database for route, RBAC and API-doc
+parity checks. Database-backed coverage can use `TDS_TEST_DB_DSN` where
+available.
 
 ## Enable it
 
-Host `astro.config.mjs`: add the manifest to `frontendHost({ extensions: [...] })`.
-Base API: add `new BlogCmsModule()` to `Modules::enabled()`.
+Add the manifest to the frontend host's extension list and add
+`new BlogCmsModule()` to the base API's enabled modules.

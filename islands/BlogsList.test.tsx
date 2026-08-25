@@ -1,35 +1,38 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { primeRuntimeConfig } from "@tracht-digital-solutions/tds-shared/api";
+import { put, resetCache } from "@tracht-digital-solutions/tds-shared/data";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import BlogsList from "./BlogsList";
 import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
 
 /**
- * The blog-CMS island, driven through the real UI. `globals` is off in the
- * vitest config, so cleanup is explicit.
+ * The blog-CMS CONTENT island, driven through the real UI. `globals` is off in
+ * the vitest config, so cleanup is explicit.
  *
  * Every request goes through a fetch stub that answers by URL + method, which
  * lets each test assert the exact call the backend would receive — the payload
  * shape is a contract with the PHP module in `php/`.
+ *
+ * Adding a blog and pointing its rebuild/page cache live in Einstellungen now
+ * (`BlogRegistry.test.tsx`). What is left here is writing.
  */
 
-type Handler = (url: string, init?: RequestInit) => { status?: number; body?: unknown } | undefined;
+type Hit = { status?: number; body?: unknown };
+type Handler = (url: string, init?: RequestInit) => Hit | Promise<Hit | undefined> | undefined;
 
 let handlers: Handler[] = [];
 let calls: Array<{ url: string; method: string; body: unknown }> = [];
 
-/** Register a canned answer; later registrations win over earlier ones. */
-
 /**
- * Path + query of a request. The island calls an ABSOLUTE URL now (via
- * `apiFetch`); a relative one would hit the product's own static host and come
- * back as SPA-fallback HTML with a 200. Matching on the path keeps the route
- * matchers below anchored.
+ * Path + query of a request. The island calls an ABSOLUTE URL (via `apiFetch`);
+ * a relative one would hit the product's own host and come back as SPA-fallback
+ * HTML with a 200. Matching on the path keeps the route matchers anchored.
  */
 const pathOf = (url: string) => String(url).replace(/^https?:\/\/[^/]+/i, "");
 
+/** Register a canned answer; later registrations win over earlier ones. */
 function respond(match: RegExp, body: unknown, status = 200, method?: string) {
   handlers.unshift((url, init) => {
     if (!match.test(pathOf(url))) return undefined;
@@ -38,13 +41,21 @@ function respond(match: RegExp, body: unknown, status = 200, method?: string) {
   });
 }
 
-/** Outcomes are toasts now — collected off the `tds:toast` bus. */
+/** Outcomes are toasts — collected off the `tds:toast` bus. */
 let toasts: Array<{ variant: string; message: string }> = [];
 const collectToast = (e: Event) => {
   toasts.push((e as CustomEvent<{ variant: string; message: string }>).detail);
 };
 
 beforeEach(() => {
+  // The data cache is module-level and survives between tests by design; a
+  // leaked entry would let one test paint another's fixture.
+  resetCache();
+  // apiFetch consults the host-side runtime config (/tds-runtime.json) before
+  // it resolves a URL, so without this the first fetch call is that probe. The
+  // panel products never ship the file — they render <meta name="tds-api-base">
+  // — so "absent" is also what happens in production.
+  primeRuntimeConfig(null);
   toasts = [];
   window.addEventListener(TOAST_EVENT, collectToast);
   handlers = [];
@@ -58,7 +69,7 @@ beforeEach(() => {
         body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
       });
       for (const h of handlers) {
-        const hit = h(url, init);
+        const hit = await h(url, init);
         if (hit) {
           const status = hit.status ?? 200;
           return {
@@ -76,144 +87,137 @@ beforeEach(() => {
 afterEach(() => {
   window.removeEventListener(TOAST_EVENT, collectToast);
   cleanup();
+  resetCache();
 });
 
 const user = () => userEvent.setup({ delay: null });
-const BLOG = { id: 1, blog_key: "haupt", name: "Hauptblog" };
+const BLOG = { id: 1, blog_key: "haupt", name: "Hauptblog", cache_url: "https://blog.example" };
 
-/** Wait past the mount effect so the list has settled. */
+/**
+ * Render with a blog list answering. A single blog SELECTS ITSELF — there is no
+ * list-then-drill-in step any more, because with one blog the list was a screen
+ * whose only content was one button.
+ */
 async function renderList(blogs: unknown[] = [BLOG]) {
-  respond(/\/blogs$/, { blogs });
+  respond(/\/blogs$/, { blogs }, 200, "GET");
   render(<BlogsList />);
   await waitFor(() => expect(calls.some((c) => pathOf(c.url) === "/blogs")).toBe(true));
 }
 
-// apiFetch consults the host-side runtime config (/tds-runtime.json) before it
-// resolves a URL, so without this the first entry in fetch.mock.calls is that
-// probe rather than the endpoint under test. The panel products never ship the
-// file — they render <meta name="tds-api-base"> instead — so "absent" is also
-// what actually happens in production.
-beforeEach(() => primeRuntimeConfig(null));
+/** Render, auto-select the only blog, and wait for its article list. */
+async function openBlog(
+  blog: Record<string, unknown> = BLOG,
+  posts: unknown[] = [],
+  authors: unknown[] = [],
+) {
+  respond(/\/blogs\/[a-z-]+\/posts$/, { posts }, 200, "GET");
+  respond(/\/blog\/authors$/, { authors }, 200, "GET");
+  await renderList([blog]);
+  await screen.findByRole("heading", { name: String(blog.name) });
+  return user();
+}
 
 describe("loading the blog list", () => {
   it("requests the blog list on mount, with credentials", async () => {
     await renderList();
-    await screen.findByText("Hauptblog");
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({ credentials: "include" });
   });
 
-  it("renders each blog's name and key", async () => {
+  it("selects the only blog instead of showing a one-button list", async () => {
+    await openBlog();
+    expect(screen.queryByRole("group", { name: "Blog wählen" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Hauptblog" })).toBeTruthy();
+  });
+
+  it("offers a picker once there is a choice", async () => {
+    respond(/\/blogs\/haupt\/posts$/, { posts: [] }, 200, "GET");
+    respond(/\/blog\/authors$/, { authors: [] }, 200, "GET");
     await renderList([BLOG, { id: 2, blog_key: "zweit", name: "Zweitblog" }]);
-    expect(await screen.findByText("Hauptblog")).toBeTruthy();
-    expect(screen.getByText("zweit")).toBeTruthy();
+    const picker = await screen.findByRole("group", { name: "Blog wählen" });
+    expect(within(picker).getByRole("button", { name: "Zweitblog" })).toBeTruthy();
   });
 
-  it("shows the empty state when there are no blogs", async () => {
+  it("sends the operator to Einstellungen when nothing is connected", async () => {
+    // Adding a blog moved off this screen, so without the pointer the panel
+    // would show an empty page with no way forward.
     await renderList([]);
-    expect(await screen.findByText("Noch keine Blogs angelegt.")).toBeTruthy();
+    expect(await screen.findByText(/Noch kein Blog verbunden/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Einstellungen/ }).getAttribute("href")).toBe(
+      "/einstellungen",
+    );
   });
 
-  it("degrades to the empty state when the request fails", async () => {
-    // A 500 must not leave the island stuck on its loading branch forever.
-    respond(/\/blogs$/, {}, 500);
-    render(<BlogsList />);
-    expect(await screen.findByText("Noch keine Blogs angelegt.")).toBeTruthy();
+  it("offers no create form on the content screen", async () => {
+    await renderList([]);
+    await screen.findByText(/Noch kein Blog verbunden/);
+    expect(screen.queryByRole("button", { name: /hinzufügen/i })).toBeNull();
   });
 
-  it("degrades to the empty state when fetch rejects outright", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+  it("reports the HTTP status rather than a calm empty list", async () => {
+    // A 500 rendered as "no blogs" is indistinguishable from a fresh install,
+    // which is the failure mode this whole codebase keeps re-learning.
+    respond(/\/blogs$/, {}, 500, "GET");
     render(<BlogsList />);
-    expect(await screen.findByText("Noch keine Blogs angelegt.")).toBeTruthy();
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("500"),
+    );
   });
 
   it("tolerates a response with no blogs field", async () => {
-    respond(/\/blogs$/, {});
+    respond(/\/blogs$/, {}, 200, "GET");
     render(<BlogsList />);
-    expect(await screen.findByText("Noch keine Blogs angelegt.")).toBeTruthy();
+    expect(await screen.findByText(/Noch kein Blog verbunden/)).toBeTruthy();
+  });
+
+  it("dims cached blogs and marks them busy while they revalidate", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    put("/blogs", { blogs: [BLOG, { id: 2, blog_key: "zweit", name: "Zweitblog" }] });
+    clock.mockReturnValue(32_000);
+
+    let release: (() => void) | undefined;
+    handlers.unshift(async (url, init) => {
+      if (pathOf(url) !== "/blogs" || (init?.method ?? "GET") !== "GET") return undefined;
+      await new Promise<void>((resolve) => { release = resolve; });
+      return { body: { blogs: [BLOG, { id: 2, blog_key: "zweit", name: "Zweitblog" }] } };
+    });
+
+    render(<BlogsList />);
+    const picker = await screen.findByRole("group", { name: "Blog wählen" });
+    const root = picker.closest(".blog-list") as HTMLElement;
+    await waitFor(() => expect(root.classList.contains("tds-stale")).toBe(true));
+    expect(root.getAttribute("aria-busy")).toBe("true");
+
+    release?.();
+    await waitFor(() => expect(root.classList.contains("tds-stale")).toBe(false));
+    clock.mockRestore();
+  });
+
+  it("keeps cached blogs visible and warns when their refresh fails", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    put("/blogs", { blogs: [BLOG] });
+    clock.mockReturnValue(32_000);
+    respond(/\/blogs$/, {}, 500, "GET");
+
+    render(<BlogsList />);
+    expect(await screen.findByRole("heading", { name: "Hauptblog" })).toBeTruthy();
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("veraltet"),
+    );
+    clock.mockRestore();
   });
 });
 
-describe("creating a blog", () => {
-  async function submit(key: string, name: string) {
-    await renderList([]);
-    const u = user();
-    if (key) await u.type(screen.getByPlaceholderText("blog-key (kebab)"), key);
-    if (name) await u.type(screen.getByPlaceholderText("Name"), name);
-    await u.click(screen.getByRole("button", { name: "Blog hinzufügen" }));
-    return calls.filter((c) => c.method === "POST");
-  }
-
-  it("posts a valid key and name", async () => {
-    const posts = await submit("mein-blog", "Mein Blog");
-    expect(posts).toHaveLength(1);
-    expect(pathOf(posts[0]!.url)).toBe("/blogs");
-    expect(posts[0]!.body).toEqual({ blog_key: "mein-blog", name: "Mein Blog" });
+describe("choosing a blog", () => {
+  it("scopes the post request to the selected blog's key", async () => {
+    respond(/\/blogs\/zweit\/posts$/, { posts: [] }, 200, "GET");
+    respond(/\/blog\/authors$/, { authors: [] }, 200, "GET");
+    await renderList([{ id: 2, blog_key: "zweit", name: "Zweitblog" }]);
+    await waitFor(() => expect(calls.some((c) => pathOf(c.url) === "/blogs/zweit/posts")).toBe(true));
+    expect(calls.some((c) => pathOf(c.url) === "/blogs/haupt/posts")).toBe(false);
   });
-
-  it("rejects a key with uppercase or spaces before sending", async () => {
-    // The backend enforces the same shape; catching it here avoids a 422.
-    expect(await submit("Mein Blog", "Name")).toHaveLength(0);
-  });
-
-  it("rejects a key shorter than two characters", async () => {
-    expect(await submit("a", "Name")).toHaveLength(0);
-  });
-
-  it("accepts a two-character key (the boundary)", async () => {
-    expect(await submit("ab", "Name")).toHaveLength(1);
-  });
-
-  it("rejects a key longer than 64 characters", async () => {
-    expect(await submit("a".repeat(65), "Name")).toHaveLength(0);
-  });
-
-  it("accepts a 64-character key (the boundary)", async () => {
-    expect(await submit("a".repeat(64), "Name")).toHaveLength(1);
-  });
-
-  it("rejects a whitespace-only name", async () => {
-    expect(await submit("gueltig", "   ")).toHaveLength(0);
-  });
-
-  it("rejects an underscore in the key", async () => {
-    expect(await submit("mein_blog", "Name")).toHaveLength(0);
-  });
-
-  it("reloads the list and clears the form after a successful create", async () => {
-    await renderList([]);
-    const u = user();
-    await u.type(screen.getByPlaceholderText("blog-key (kebab)"), "neu");
-    await u.type(screen.getByPlaceholderText("Name"), "Neu");
-    await u.click(screen.getByRole("button", { name: "Blog hinzufügen" }));
-
-    await waitFor(() => expect(calls.filter((c) => pathOf(c.url) === "/blogs" && c.method === "GET")).toHaveLength(2));
-    expect((screen.getByPlaceholderText("blog-key (kebab)") as HTMLInputElement).value).toBe("");
-    expect((screen.getByPlaceholderText("Name") as HTMLInputElement).value).toBe("");
-  });
-
-  it("keeps the form filled when the create fails", async () => {
-    // Losing the input on a server error would make the user retype it.
-    await renderList([]);
-    respond(/\/blogs$/, {}, 500, "POST");
-    const u = user();
-    await u.type(screen.getByPlaceholderText("blog-key (kebab)"), "neu");
-    await u.type(screen.getByPlaceholderText("Name"), "Neu");
-    await u.click(screen.getByRole("button", { name: "Blog hinzufügen" }));
-
-    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    expect((screen.getByPlaceholderText("blog-key (kebab)") as HTMLInputElement).value).toBe("neu");
-  });
-});
-
-describe("opening a blog", () => {
-  async function openBlog() {
-    await renderList();
-    respond(/\/blogs\/haupt\/posts$/, { posts: [] });
-    respond(/\/blog\/authors$/, { authors: [] });
-    await user().click(await screen.findByRole("button", { name: /Hauptblog/ }));
-    return user();
-  }
 
   it("loads that blog's posts and the author list", async () => {
     await openBlog();
@@ -223,19 +227,28 @@ describe("opening a blog", () => {
     });
   });
 
-  it("scopes the post request to the selected blog's key", async () => {
+  it("switches the article list when another blog is chosen", async () => {
+    respond(/\/blogs\/haupt\/posts$/, { posts: [] }, 200, "GET");
+    respond(/\/blogs\/zweit\/posts$/, { posts: [] }, 200, "GET");
+    respond(/\/blog\/authors$/, { authors: [] }, 200, "GET");
     await renderList([BLOG, { id: 2, blog_key: "zweit", name: "Zweitblog" }]);
-    respond(/\/blogs\/zweit\/posts$/, { posts: [] });
-    respond(/\/blog\/authors$/, { authors: [] });
-    await user().click(await screen.findByRole("button", { name: /Zweitblog/ }));
+    const picker = await screen.findByRole("group", { name: "Blog wählen" });
+    await user().click(within(picker).getByRole("button", { name: "Zweitblog" }));
     await waitFor(() => expect(calls.some((c) => pathOf(c.url) === "/blogs/zweit/posts")).toBe(true));
-    expect(calls.some((c) => pathOf(c.url) === "/blogs/haupt/posts")).toBe(false);
   });
 
-  it("returns to the blog list", async () => {
-    const u = await openBlog();
-    await u.click(await screen.findByRole("button", { name: "← Blogs" }));
-    expect(await screen.findByPlaceholderText("blog-key (kebab)")).toBeTruthy();
+  it("does not carry an open editor into another blog", async () => {
+    respond(/\/blogs\/haupt\/posts$/, { posts: [] }, 200, "GET");
+    respond(/\/blogs\/zweit\/posts$/, { posts: [] }, 200, "GET");
+    respond(/\/blog\/authors$/, { authors: [] }, 200, "GET");
+    await renderList([BLOG, { id: 2, blog_key: "zweit", name: "Zweitblog" }]);
+    await user().click(await screen.findByRole("button", { name: "Neuer Beitrag" }));
+    expect(screen.getByRole("heading", { name: "Neuer Beitrag" })).toBeTruthy();
+
+    const picker = screen.getByRole("group", { name: "Blog wählen" });
+    await user().click(within(picker).getByRole("button", { name: "Zweitblog" }));
+    expect(await screen.findByRole("heading", { name: "Zweitblog" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Neuer Beitrag" })).toBeNull();
   });
 });
 
@@ -246,7 +259,6 @@ describe("the post editor", () => {
     respond(/\/blogs\/haupt\/posts$/, { posts: [] });
     respond(/\/blog\/authors$/, { authors: [{ id: 7, name: "Julian" }] });
     const u = user();
-    await u.click(await screen.findByRole("button", { name: /Hauptblog/ }));
     await u.click(await screen.findByRole("button", { name: "Neuer Beitrag" }));
     return u;
   }
@@ -382,11 +394,7 @@ await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.messag
 
 describe("the editor's markdown preview", () => {
   async function typeBody(body: string) {
-    await renderList();
-    respond(/\/blogs\/haupt\/posts$/, { posts: [] });
-    respond(/\/blog\/authors$/, { authors: [] });
-    const u = user();
-    await u.click(await screen.findByRole("button", { name: /Hauptblog/ }));
+    const u = await openBlog();
     await u.click(await screen.findByRole("button", { name: "Neuer Beitrag" }));
     await u.type(screen.getByPlaceholderText(/Text in Markdown/), body);
     await u.click(screen.getByRole("button", { name: "Vorschau" }));
@@ -421,7 +429,6 @@ describe("existing posts", () => {
     respond(/\/blog\/authors$/, { authors: [] });
     respond(/\/posts\/hallo\?lang=de$/, { title: "Hallo", body: "Text", category: "news", draft: 0 });
     const u = user();
-    await u.click(await screen.findByRole("button", { name: /Hauptblog/ }));
     await u.click(await screen.findByRole("button", { name: /Hallo/ }));
     return u;
   }
@@ -430,7 +437,6 @@ describe("existing posts", () => {
     await renderList();
     respond(/\/blogs\/haupt\/posts$/, { posts: [POST] });
     respond(/\/blog\/authors$/, { authors: [] });
-    await user().click(await screen.findByRole("button", { name: /Hauptblog/ }));
     expect(await screen.findByRole("button", { name: /Hallo/ })).toBeTruthy();
   });
 
@@ -470,54 +476,121 @@ describe("existing posts", () => {
     await u.click(screen.getAllByRole("button", { name: /Löschen/ }).at(-1)!);
     await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("403"))).toBe(true));
   });
+
+  it("does not open a partial editor when loading the full post fails", async () => {
+    await renderList();
+    respond(/\/blogs\/haupt\/posts$/, { posts: [POST] });
+    respond(/\/blog\/authors$/, { authors: [] });
+    respond(/\/posts\/hallo\?lang=de$/, {}, 500, "GET");
+
+    await user().click(await screen.findByRole("button", { name: /Hallo/ }));
+    await waitFor(() =>
+      expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true),
+    );
+    expect(screen.queryByRole("heading", { name: "Beitrag bearbeiten" })).toBeNull();
+  });
 });
 
-describe("rebuild and translation controls", () => {
-  async function openBlog(blog: Record<string, unknown> = BLOG) {
-    await renderList([blog]);
-    respond(/\/blogs\/haupt\/posts$/, { posts: [] });
-    respond(/\/blog\/authors$/, { authors: [] });
-    await user().click(await screen.findByRole("button", { name: /Hauptblog/ }));
-    return user();
-  }
+describe("the page cache", () => {
+  const POST = { slug: "hallo", lang: "de", title: "Hallo", draft: 0, published_at: "2026-01-01" };
+  const DRAFT = { slug: "entwurf", lang: "de", title: "Entwurf", draft: 1, published_at: null };
 
-  it("saves the rebuild configuration trimmed", async () => {
-    const u = await openBlog();
-    const repo = await screen.findByPlaceholderText("Tracht-Digital-Solutions/tds-blog-frontend");
-    await u.type(repo, "  Tracht-Digital-Solutions/tds-blog-frontend  ");
-    await u.click(screen.getByRole("button", { name: "Konfiguration speichern" }));
+  it("rebuilds ONE article, not the whole corpus", async () => {
+    // The case the page cache exists for: correcting one paragraph used to
+    // cost a rebuild of every page in the blog.
+    const u = await openBlog(BLOG, [POST]);
+    await u.click(await screen.findByRole("button", { name: "Cache neu bauen" }));
     await waitFor(() => {
-      const put = calls.find((c) => c.method === "PUT");
-      expect(put?.body).toMatchObject({ rebuild_repo: "Tracht-Digital-Solutions/tds-blog-frontend" });
+      const post = calls.find((c) => c.method === "POST");
+      expect(pathOf(post!.url)).toBe("/blogs/haupt/cache/rebuild");
+      expect(post!.body).toMatchObject({ slug: "hallo" });
     });
   });
 
-  it("explains a 503 from a rebuild as a missing token, not a generic error", async () => {
-    const u = await openBlog();
-    respond(/\/rebuild$/, {}, 503, "POST");
-    await u.click(await screen.findByRole("button", { name: /Jetzt neu bauen/ }));
-    expect(await screen.findByText(/Kein Rebuild-Token konfiguriert/)).toBeTruthy();
+  it("offers no rebuild for a draft — nothing of its is public", async () => {
+    await openBlog(BLOG, [DRAFT]);
+    await screen.findByRole("button", { name: /Entwurf/ });
+    expect(screen.queryByRole("button", { name: "Cache neu bauen" })).toBeNull();
   });
 
-  it("explains a 422 from a rebuild as a missing repository", async () => {
-    const u = await openBlog();
-    respond(/\/rebuild$/, {}, 422, "POST");
-    await u.click(await screen.findByRole("button", { name: /Jetzt neu bauen/ }));
-    expect(await screen.findByText(/kein Repository hinterlegt/)).toBeTruthy();
+  it("keeps a missing address in the flow rather than as a toast", async () => {
+    // A vanishing message would leave the operator pressing a button that can
+    // never work.
+    const u = await openBlog(BLOG, [POST]);
+    respond(/\/cache\/rebuild$/, {}, 422, "POST");
+    await u.click(await screen.findByRole("button", { name: "Cache neu bauen" }));
+    expect(await screen.findByRole("status")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("keine Adresse"),
+    );
   });
 
-  it("reports an unexpected rebuild failure with its status", async () => {
-    const u = await openBlog();
-    respond(/\/rebuild$/, {}, 500, "POST");
-    await u.click(await screen.findByRole("button", { name: /Jetzt neu bauen/ }));
-    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
+  it("keeps a missing cache token in the flow rather than claiming success", async () => {
+    const u = await openBlog(BLOG, [POST]);
+    respond(/\/cache\/rebuild$/, {}, 503, "POST");
+    await u.click(await screen.findByRole("button", { name: "Cache neu bauen" }));
+    expect(await screen.findByRole("status")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("Token"),
+    );
+    expect(toasts.some((t) => t.variant === "success")).toBe(false);
   });
 
+  it("reports the status when the rebuild fails outright", async () => {
+    const u = await openBlog(BLOG, [POST]);
+    respond(/\/cache\/rebuild$/, {}, 500, "POST");
+    await u.click(await screen.findByRole("button", { name: "Cache neu bauen" }));
+    await waitFor(() =>
+      expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true),
+    );
+  });
+});
+
+describe("what a save says afterwards", () => {
+  /** Fill in the minimum a new post needs, save, and return the last toast. */
+  async function saveNewPost(response: Record<string, unknown>, publish = true) {
+    respond(/\/blogs\/haupt\/posts\/[a-z-]+$/, response, 200, "PUT");
+    const u = await openBlog();
+    await u.click(await screen.findByRole("button", { name: "Neuer Beitrag" }));
+    await u.type(screen.getByPlaceholderText("mein-beitrag"), "hallo");
+    await u.type(screen.getByPlaceholderText(/Titel/), "Hallo");
+    await u.type(screen.getByPlaceholderText(/Text in Markdown/), "Text");
+    if (publish) await u.click(screen.getByLabelText(/Veröffentlichen/));
+    await u.click(screen.getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(toasts.length).toBeGreaterThan(0));
+    return toasts[toasts.length - 1]!;
+  }
+
+  it("says the article's page rebuild was requested", async () => {
+    const toast = await saveNewPost({ ok: true, cached: true });
+    expect(toast.variant).toBe("success");
+    expect(toast.message).toContain("angefragt");
+  });
+
+  it("does not promise a rebuild for a draft", async () => {
+    // A draft never triggers one, so inferring it from `ok` would promise a
+    // rebuild after every draft save.
+    const toast = await saveNewPost({ ok: true, cached: false }, false);
+    expect(toast.message).not.toContain("angefragt");
+    expect(toast.message).toContain("nicht öffentlich");
+  });
+
+  it("does not claim a rebuild the API says did not happen", async () => {
+    const toast = await saveNewPost({ ok: true, cached: false });
+    expect(toast.message).not.toContain("angefragt");
+  });
+});
+
+describe("translation controls", () => {
   it("reports the counts returned by a translation backfill", async () => {
     const u = await openBlog();
     respond(/\/translations\/backfill$/, { created: 3, skipped: 1 }, 200, "POST");
     await u.click(await screen.findByRole("button", { name: /Übersetzungen nachziehen/ }));
-await waitFor(() => expect(toasts.some((t) => t.variant === "success" && /3 erstellt, 1 übersprungen/.test(t.message))).toBe(true));
+    await waitFor(() =>
+      expect(
+        toasts.some((t) => t.variant === "success" && /3 erstellt, 1 übersprungen/.test(t.message)),
+      ).toBe(true),
+    );
   });
 
   it("explains a 503 from a backfill as DeepL not being configured", async () => {
@@ -527,23 +600,53 @@ await waitFor(() => expect(toasts.some((t) => t.variant === "success" && /3 erst
     expect(await screen.findByText(/nicht konfiguriert/)).toBeTruthy();
   });
 
+  it("points at the settings page, not at an env var nobody can edit", async () => {
+    // A feature that can only be configured by editing a file on the host is,
+    // on this Plesk host, a feature nobody has.
+    const u = await openBlog();
+    respond(/\/translations\/backfill$/, {}, 503, "POST");
+    await u.click(await screen.findByRole("button", { name: /Übersetzungen nachziehen/ }));
+    // Asserted on the STATUS message, not on the page text: the marginalia
+    // above it also says "Einstellungen", so a loose match would pass with the
+    // env-var wording still in the error.
+    expect(await screen.findByRole("status")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("Einstellungen"),
+    );
+  });
+
   it("survives a backfill success with an unparseable body", async () => {
     const u = await openBlog();
     handlers.unshift((url, init) =>
       /backfill/.test(url) && init?.method === "POST" ? { status: 200, body: undefined } : undefined,
     );
     await u.click(await screen.findByRole("button", { name: /Übersetzungen nachziehen/ }));
-await waitFor(() => expect(toasts.some((t) => t.variant === "success" && /0 erstellt, 0 übersprungen/.test(t.message))).toBe(true));
+    await waitFor(() =>
+      expect(
+        toasts.some((t) => t.variant === "success" && /0 erstellt, 0 übersprungen/.test(t.message)),
+      ).toBe(true),
+    );
   });
+});
 
-  it("pre-fills the rebuild workflow with dev.yml when the blog has none", async () => {
+describe("what moved to Einstellungen", () => {
+  it("shows no rebuild repository field on the writing screen", async () => {
+    // It sat directly above the article list: a GitHub repository name and a
+    // deploy button, on the page somebody opens to write.
     await openBlog();
-    expect((await screen.findByPlaceholderText("dev.yml") as HTMLInputElement).value).toBe("dev.yml");
+    expect(screen.queryByPlaceholderText("Tracht-Digital-Solutions/tds-blog-frontend")).toBeNull();
+    expect(screen.queryByPlaceholderText("dev.yml")).toBeNull();
   });
 
-  it("pre-fills the rebuild fields from the blog record", async () => {
-    await openBlog({ ...BLOG, rebuild_repo: "o/r", rebuild_workflow: "release.yml" });
-    expect((await screen.findByPlaceholderText("Tracht-Digital-Solutions/tds-blog-frontend") as HTMLInputElement).value).toBe("o/r");
-    expect((screen.getByPlaceholderText("dev.yml") as HTMLInputElement).value).toBe("release.yml");
+  it("shows no page-cache address field on the writing screen", async () => {
+    await openBlog();
+    expect(screen.queryByPlaceholderText("https://blog.tracht-digital.de")).toBeNull();
+  });
+
+  it("offers no CI build button on the writing screen", async () => {
+    // The expensive one is the wrong guess, so it is not one click from a typo
+    // correction any more.
+    await openBlog();
+    expect(screen.queryByRole("button", { name: /Jetzt neu bauen/ })).toBeNull();
   });
 });

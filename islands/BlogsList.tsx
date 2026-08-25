@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ConfirmDialog, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
+import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
 // The escape-first renderer moved to tds-shared: the customer wiki renders
 // handbook articles with the same function, and an XSS boundary must not
 // exist twice. Its test suite moved with it.
@@ -13,12 +14,8 @@ interface Blog {
   rebuild_repo?: string | null;
   rebuild_workflow?: string | null;
   /**
-   * Origin of the public blog whose page cache a save rebuilds.
-   *
-   * Separate from the rebuild pair above and not interchangeable with it: a
-   * full rebuild dispatches a CI build, re-runs the DeepL translations and
-   * re-renders one OG card per post. This re-renders the handful of pages one
-   * article dates.
+   * Origin of the public blog whose page cache a save rebuilds. Configured
+   * under Einstellungen → Blog-CMS, not here.
    */
   cache_url?: string | null;
 }
@@ -80,96 +77,124 @@ const EMPTY_POST: PostDraft = {
 };
 
 /**
- * Blog-CMS managed-blogs list + add-blog form + a selected blog's post list
- * (CP1) and the per-post markdown editor (CP2) — create/edit a post (slug + lang,
- * title/category/excerpt/cover + markdown body), toggle draft/publish, and delete.
- * A save-triggered static-blog rebuild lands in a later checkpoint.
+ * Blog-CMS — the CONTENT screen: pick a blog, pick an article, edit it.
+ *
+ * ### What is deliberately NOT here any more
+ *
+ * Adding a blog, and configuring where its rebuild and its page cache point,
+ * moved to **Einstellungen → Blog-CMS** (`BlogRegistry.tsx`). A GitHub
+ * repository field and a deploy button were sitting above the article list, on
+ * the screen someone opens to write. This one answers a single question: what
+ * does this article say.
+ *
+ * ### Stale-while-revalidate
+ *
+ * The blog list, the article list and the author list all read through
+ * `useCachedJson`, so returning to this screen paints last visit's contents
+ * immediately and refreshes them behind the user. A list being refreshed wears
+ * `tds-stale` — dimmed and pulsing — because data that may already be wrong
+ * must not look current.
  */
 export default function BlogsList() {
-  const [blogs, setBlogs] = useState<Blog[] | null>(null);
-  const [key, setKey] = useState("");
-  const [name, setName] = useState("");
-  const [selected, setSelected] = useState<Blog | null>(null);
+  const blogsQuery = useCachedJson<{ blogs: Blog[] }>("/blogs");
+  const blogs = useMemo(() => blogsQuery.data?.blogs ?? [], [blogsQuery.data]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
-  const loadBlogs = () =>
-    api("/blogs")
-      .then((r) => (r.ok ? r.json() : { blogs: [] }))
-      .then((d) => setBlogs(d.blogs ?? []))
-      .catch(() => setBlogs([]));
-
+  // Follow the registry: a blog that disappears (or the first one to arrive)
+  // must not leave the screen pointing at nothing.
   useEffect(() => {
-    loadBlogs();
-  }, []);
-
-  const create = async () => {
-    if (!/^[a-z0-9-]{2,64}$/.test(key) || name.trim() === "") return;
-    const res = await api("/blogs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ blog_key: key, name }),
-    });
-    if (res.ok) {
-      setKey("");
-      setName("");
-      loadBlogs();
+    if (blogs.length === 0) {
+      if (selectedKey !== null) setSelectedKey(null);
+      return;
     }
-  };
+    if (selectedKey === null || !blogs.some((b) => b.blog_key === selectedKey)) {
+      setSelectedKey(blogs[0]?.blog_key ?? null);
+    }
+  }, [blogs, selectedKey]);
 
-  if (selected) {
-    return <BlogPosts blog={selected} onBack={() => setSelected(null)} />;
+  const selected = blogs.find((b) => b.blog_key === selectedKey) ?? null;
+
+  if (blogsQuery.loading) {
+    return (
+      <p>
+        <Spinner />
+      </p>
+    );
+  }
+
+  if (blogsQuery.error && blogs.length === 0) {
+    return (
+      <p className="tds-alert tds-alert--danger" role="alert">
+        Blogs konnten nicht geladen werden ({blogsQuery.error.message}).
+      </p>
+    );
+  }
+
+  if (blogs.length === 0) {
+    return (
+      <div className="tds-empty">
+        <p>Noch kein Blog verbunden.</p>
+        <p className="marginalia">
+          Blogs werden unter <a className="link-underline" href="/einstellungen">Einstellungen → Blog-CMS</a>{" "}
+          hinzugefügt. Dort liegt auch, wohin ein veröffentlichter Beitrag den Seiten-Cache
+          schickt.
+        </p>
+      </div>
+    );
   }
 
   return (
-    <div className="blog-list">
-      <form
-        className="tds-stack"
-        onSubmit={(e) => {
-          e.preventDefault();
-          create();
-        }}
-      >
-        <input className="field-boxed" value={key} onChange={(e) => setKey(e.target.value)} placeholder="blog-key (kebab)" required />
-        <input className="field-boxed" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
-        <button className="btn btn-primary" type="submit">Blog hinzufügen</button>
-      </form>
-
-      {blogs === null ? (
-        <p><Spinner /></p>
-      ) : blogs.length === 0 ? (
-        <p>Noch keine Blogs angelegt.</p>
-      ) : (
-        <ul className="tds-list">
+    <div
+      className={staleClass(blogsQuery.stale, "blog-list tds-stack")}
+      aria-busy={blogsQuery.stale}
+    >
+      {blogsQuery.error ? (
+        <p className="tds-alert tds-alert--danger" role="alert">
+          Die Blog-Liste konnte nicht aktualisiert werden ({blogsQuery.error.message}).
+          Die angezeigten Daten können veraltet sein.
+        </p>
+      ) : null}
+      {/* One blog is the overwhelmingly common case, so the picker only earns
+          its space when there is a choice to make. */}
+      {blogs.length > 1 ? (
+        <div
+          className="tds-toolbar"
+          role="group"
+          aria-label="Blog wählen"
+        >
           {blogs.map((b) => (
-            <li key={b.id}>
-              <button className="btn btn-ghost" type="button" onClick={() => setSelected(b)}>
-                <strong>{b.name}</strong> <code>{b.blog_key}</code>
-              </button>
-            </li>
+            <button
+              key={b.id}
+              type="button"
+              className={b.blog_key === selectedKey ? "chip chip--info" : "chip chip--neutral"}
+              aria-pressed={b.blog_key === selectedKey}
+              onClick={() => setSelectedKey(b.blog_key)}
+            >
+              {b.name}
+            </button>
           ))}
-        </ul>
-      )}
+        </div>
+      ) : null}
+
+      {selected ? <BlogPosts key={selected.blog_key} blog={selected} /> : null}
     </div>
   );
 }
 
-function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
-  const [posts, setPosts] = useState<PostMeta[] | null>(null);
+/** One blog's articles, plus the editor for the chosen one. */
+function BlogPosts({ blog }: { blog: Blog }) {
+  const postsQuery = useCachedJson<{ posts: PostMeta[] }>(`/blogs/${blog.blog_key}/posts`);
+  const posts = postsQuery.data?.posts ?? [];
+  const authorsQuery = useCachedJson<{ authors: Author[] }>("/blog/authors");
+  const authors = useMemo(() => authorsQuery.data?.authors ?? [], [authorsQuery.data]);
+
   const [editing, setEditing] = useState<PostDraft | null>(null);
   /** True when the editor targets an existing (blog, slug, lang) — locks slug/lang. */
   const [isExisting, setIsExisting] = useState(false);
-  const [rebuildRepo, setRebuildRepo] = useState(blog.rebuild_repo ?? "");
-  const [rebuildWorkflow, setRebuildWorkflow] = useState(blog.rebuild_workflow ?? "dev.yml");
-  const [rebuildStatus, setRebuildStatus] = useState<string | null>(null);
-  const [cacheUrl, setCacheUrl] = useState(blog.cache_url ?? "");
-  const [cacheStatus, setCacheStatus] = useState<string | null>(null);
   const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
-  const [authors, setAuthors] = useState<Author[]>([]);
+  const [cacheStatus, setCacheStatus] = useState<string | null>(null);
 
-  const loadAuthors = () =>
-    api("/blog/authors")
-      .then((r) => (r.ok ? r.json() : { authors: [] }))
-      .then((d) => setAuthors(d.authors ?? []))
-      .catch(() => setAuthors([]));
+  const cacheConfigured = Boolean((blog.cache_url ?? "").trim());
 
   const backfill = async () => {
     setBackfillStatus("Übersetzungen werden erzeugt …");
@@ -178,92 +203,53 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
       const d = await res.json().catch(() => ({}));
       setBackfillStatus(null);
       toast.success(`Fertig: ${d.created ?? 0} erstellt, ${d.skipped ?? 0} übersprungen.`);
-      loadPosts();
+      invalidate(`/blogs/${blog.blog_key}/`);
     } else if (res.status === 503) {
       // A missing key is a CONFIGURATION problem, not a transient outcome —
       // it stays on screen until someone sets the key.
-      setBackfillStatus("Automatische Übersetzung ist nicht konfiguriert (BLOG_DEEPL_API_KEY).");
+      setBackfillStatus("Automatische Übersetzung ist nicht konfiguriert (Einstellungen → Blog-CMS).");
     } else {
       setBackfillStatus(null);
       toast.danger(`Übersetzungslauf fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
-  const saveRebuildConfig = async () => {
-    const res = await api(`/blogs/${blog.blog_key}/rebuild-config`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        rebuild_repo: rebuildRepo.trim(),
-        rebuild_workflow: rebuildWorkflow.trim(),
-        cache_url: cacheUrl.trim(),
-      }),
-    });
-    if (res.ok) toast.success("Rebuild-Konfiguration gespeichert.");
-    else toast.danger(`Rebuild-Konfiguration konnte nicht gespeichert werden (HTTP ${res.status}).`);
-  };
-
   /**
-   * Re-render the public blog's cached pages.
+   * Re-render the cached pages of ONE article.
    *
-   * `slug` narrows it to one article and the pages that list it — the case the
-   * whole page cache exists for, since a correction to one paragraph used to
-   * cost a rebuild of the entire corpus.
+   * This is the case the whole page cache exists for: correcting one paragraph
+   * used to cost a rebuild of the entire corpus. Publishing does it by itself —
+   * this button is the catch-up for when that did not land.
    */
-  const rebuildCache = async (slug?: string) => {
-    setCacheStatus("Seiten-Cache wird neu gebaut …");
+  const rebuildArticle = async (slug: string) => {
+    setCacheStatus(`Seiten von „${slug}“ werden neu gebaut …`);
     const res = await api(`/blogs/${blog.blog_key}/cache/rebuild`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(slug ? { slug } : {}),
+      body: JSON.stringify({ slug }),
     });
     if (res.ok) {
       setCacheStatus(null);
-      toast.success(slug ? `Seiten-Cache für „${slug}" wird neu gebaut.` : "Seiten-Cache wird neu gebaut.");
+      toast.success(`Cache-Neubau für „${slug}“ wurde angefragt.`);
     } else if (res.status === 422) {
       // A persistent configuration gap, so it stays on screen: a vanishing
       // message would leave the operator pressing a button that can never work.
-      setCacheStatus("Für diesen Blog ist keine Cache-Adresse hinterlegt.");
+      setCacheStatus("Für diesen Blog ist keine Adresse hinterlegt (Einstellungen → Blog-CMS).");
+    } else if (res.status === 503) {
+      setCacheStatus("Der Seiten-Cache ist nicht vollständig konfiguriert (Token unter Einstellungen → Blog-CMS prüfen).");
     } else {
       setCacheStatus(null);
       toast.danger(`Cache-Neubau fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
-  const rebuildNow = async () => {
-    setRebuildStatus("Rebuild wird ausgelöst …");
-    const res = await api(`/blogs/${blog.blog_key}/rebuild`, { method: "POST" });
-    if (res.ok) {
-      setRebuildStatus(null);
-      toast.success("Rebuild ausgelöst.");
-    } else if (res.status === 503 || res.status === 422) {
-      // Both are missing CONFIGURATION (no token / no repo) — they stay on
-      // screen, because they name something the operator has to go and fix.
-      setRebuildStatus(
-        res.status === 503
-          ? "Kein Rebuild-Token konfiguriert (BLOG_REBUILD_TOKEN)."
-          : "Für diesen Blog ist kein Repository hinterlegt.",
-      );
-    } else {
-      setRebuildStatus(null);
-      toast.danger(`Rebuild fehlgeschlagen (HTTP ${res.status}).`);
-    }
-  };
-
-  const loadPosts = () =>
-    api(`/blogs/${blog.blog_key}/posts`)
-      .then((r) => (r.ok ? r.json() : { posts: [] }))
-      .then((d) => setPosts(d.posts ?? []))
-      .catch(() => setPosts([]));
-
-  useEffect(() => {
-    loadPosts();
-    loadAuthors();
-  }, []);
-
   const openPost = async (p: PostMeta) => {
     const res = await api(`/blogs/${blog.blog_key}/posts/${p.slug}?lang=${p.lang}`);
-    const d = res.ok ? await res.json() : {};
+    if (!res.ok) {
+      toast.danger(`Beitrag konnte nicht geladen werden (HTTP ${res.status}).`);
+      return;
+    }
+    const d = await res.json();
     setIsExisting(true);
     setEditing({
       slug: p.slug,
@@ -292,9 +278,10 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
         post={editing}
         isExisting={isExisting}
         authors={authors}
+        cacheConfigured={cacheConfigured}
         onDone={() => {
           setEditing(null);
-          loadPosts();
+          invalidate(`/blogs/${blog.blog_key}/`);
         }}
         onCancel={() => setEditing(null)}
       />
@@ -302,20 +289,37 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
   }
 
   return (
-    <div className="blog-posts">
-      <button className="btn btn-ghost" type="button" onClick={onBack}>← Blogs</button>
+    <div className="blog-posts tds-stack">
       <div className="tds-row tds-row--between">
         <h2>{blog.name}</h2>
-        <button className="btn btn-ghost" type="button" onClick={newPost}>Neuer Beitrag</button>
+        <button className="btn btn-ghost" type="button" onClick={newPost}>
+          Neuer Beitrag
+        </button>
       </div>
-      {posts === null ? (
-        <p><Spinner /></p>
+
+      {postsQuery.error ? (
+        <p className="tds-alert tds-alert--danger" role="alert">
+          {posts.length === 0
+            ? `Beiträge konnten nicht geladen werden (${postsQuery.error.message}).`
+            : `Die Beiträge konnten nicht aktualisiert werden (${postsQuery.error.message}). Die angezeigten Daten können veraltet sein.`}
+        </p>
+      ) : null}
+      {cacheStatus ? (
+        <p className="tds-alert" role="status">
+          {cacheStatus}
+        </p>
+      ) : null}
+
+      {postsQuery.loading ? (
+        <p>
+          <Spinner />
+        </p>
       ) : posts.length === 0 ? (
-        <p>Noch keine Beiträge.</p>
+        <p className="tds-empty">Noch keine Beiträge.</p>
       ) : (
-        <ul className="tds-list">
+        <ul className={staleClass(postsQuery.stale, "tds-list")} aria-busy={postsQuery.stale}>
           {posts.map((p) => (
-            <li key={`${p.slug}-${p.lang}`}>
+            <li key={`${p.slug}-${p.lang}`} className="tds-list__row">
               <button className="btn btn-ghost" type="button" onClick={() => openPost(p)}>
                 <strong>{p.title}</strong> <code>{p.slug}</code>
                 <span className="chip chip--neutral">{p.lang}</span>
@@ -323,19 +327,20 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
                   {p.draft ? "Entwurf" : "Veröffentlicht"}
                 </span>
                 {p.machine_translated ? (
-                  <span className="chip chip--info" title="Automatisch übersetzt">Auto-Übersetzung</span>
+                  <span className="chip chip--info" title="Automatisch übersetzt">
+                    Auto-Übersetzung
+                  </span>
                 ) : null}
                 {p.author_name ? <span className="text-xs opacity-60"> · {p.author_name}</span> : null}
               </button>
               {/* Per article, because that is the case this whole mechanism
-                  exists for: correcting one paragraph used to cost a rebuild
-                  of every page in the corpus. Draft rows get no button —
-                  nothing of theirs is public to rebuild. */}
+                  exists for. Draft rows get no button — nothing of theirs is
+                  public to rebuild. */}
               {p.draft ? null : (
                 <button
                   className="btn btn-ghost"
                   type="button"
-                  onClick={() => rebuildCache(p.slug)}
+                  onClick={() => rebuildArticle(p.slug)}
                   title="Nur die Seiten dieses Beitrags neu rendern"
                 >
                   Cache neu bauen
@@ -346,68 +351,29 @@ function BlogPosts({ blog, onBack }: { blog: Blog; onBack: () => void }) {
         </ul>
       )}
 
-      <AuthorManager authors={authors} onChange={loadAuthors} />
+      <AuthorManager
+        authors={authors}
+        loading={authorsQuery.loading}
+        stale={authorsQuery.stale}
+        error={authorsQuery.error}
+        onChange={() => invalidate("/blog/authors")}
+      />
 
       <div className="blog-translate">
         <h3>Automatische Übersetzung</h3>
         <p className="marginalia">
           Beim Speichern eines veröffentlichten Beitrags wird die Gegensprache per DeepL
-          erzeugt (Schlüssel serverseitig via <code>BLOG_DEEPL_API_KEY</code>). Vorhandene
-          Beiträge lassen sich hier nachziehen.
+          erzeugt (Schlüssel unter Einstellungen → Blog-CMS). Vorhandene Beiträge lassen
+          sich hier nachziehen.
         </p>
-        {backfillStatus ? <p className="tds-alert" role="status">{backfillStatus}</p> : null}
-        <button className="btn btn-primary" type="button" onClick={backfill}>Übersetzungen nachziehen</button>
-      </div>
-
-      <div className="blog-rebuild">
-        <h3>Rebuild-Konfiguration</h3>
-        <p className="marginalia">
-          Repository (<code>owner/name</code>) und Workflow-Datei, die ein veröffentlichter
-          Beitrag neu baut. Der Token wird serverseitig über <code>BLOG_REBUILD_TOKEN</code> bereitgestellt.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <input className="field-boxed"
-            value={rebuildRepo}
-            onChange={(e) => setRebuildRepo(e.target.value)}
-            placeholder="Tracht-Digital-Solutions/tds-blog-frontend"
-          />
-          <input className="field-boxed"
-            value={rebuildWorkflow}
-            onChange={(e) => setRebuildWorkflow(e.target.value)}
-            placeholder="dev.yml"
-          />
-        </div>
-        {rebuildStatus ? <p className="tds-alert" role="status">{rebuildStatus}</p> : null}
-        <div className="flex flex-wrap gap-2">
-          <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
-          <button className="btn btn-primary" type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
-        </div>
-      </div>
-
-      <div className="blog-rebuild">
-        <h3>Seiten-Cache</h3>
-        <p className="marginalia">
-          Der öffentliche Blog rendert auf Anfrage und legt jede Seite als Datei ab.
-          Ein veröffentlichter Beitrag baut den Cache seiner Seiten automatisch neu —
-          dieser Knopf ist für den Fall, dass etwas dazwischenkam.
-          {" "}
-          <strong>Nicht dasselbe wie „Jetzt neu bauen"</strong>: das stößt einen CI-Build
-          an, lässt die Übersetzungen erneut laufen und rendert je Beitrag eine OG-Karte
-          neu. Der Cache-Neubau braucht Sekunden.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <input className="field-boxed"
-            value={cacheUrl}
-            onChange={(e) => setCacheUrl(e.target.value)}
-            placeholder="https://blog.tracht-digital.de"
-            aria-label="Adresse des öffentlichen Blogs"
-          />
-        </div>
-        {cacheStatus ? <p className="tds-alert" role="status">{cacheStatus}</p> : null}
-        <div className="flex flex-wrap gap-2">
-          <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Adresse speichern</button>
-          <button className="btn btn-accent" type="button" onClick={() => rebuildCache()}>Seiten-Cache neu bauen</button>
-        </div>
+        {backfillStatus ? (
+          <p className="tds-alert" role="status">
+            {backfillStatus}
+          </p>
+        ) : null}
+        <button className="btn btn-primary" type="button" onClick={backfill}>
+          Übersetzungen nachziehen
+        </button>
       </div>
     </div>
   );
@@ -418,6 +384,7 @@ function PostEditor({
   post,
   isExisting,
   authors,
+  cacheConfigured,
   onDone,
   onCancel,
 }: {
@@ -425,6 +392,8 @@ function PostEditor({
   post: PostDraft;
   isExisting: boolean;
   authors: Author[];
+  /** Whether this blog has a page-cache address — see the save message below. */
+  cacheConfigured: boolean;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -465,12 +434,26 @@ function PostEditor({
       }),
     });
     setBusy(false);
-    if (res.ok) {
-      toast.success("Beitrag gespeichert.");
-      onDone();
-    } else {
+    if (!res.ok) {
+      // Never swallow the status: it is what tells "session expired" from
+      // "service down" apart in a bug report.
       toast.danger(`Speichern fehlgeschlagen (HTTP ${res.status}).`);
+      return;
     }
+    const body = (await res.json().catch(() => ({}))) as { cached?: boolean };
+    // The API reports whether THIS article's pages were really asked to
+    // re-render. A draft never triggers one, so inferring it from `ok` would
+    // promise a rebuild after every draft save.
+    toast.success(
+      body.cached === true
+        ? "Beitrag gespeichert — der Neubau seiner Seiten wurde angefragt."
+        : form.draft
+          ? "Entwurf gespeichert. Entwürfe sind nicht öffentlich."
+          : cacheConfigured
+            ? "Beitrag gespeichert. Der Seiten-Cache konnte nicht angestoßen werden."
+            : "Beitrag gespeichert. Für diesen Blog ist kein Seiten-Cache hinterlegt.",
+    );
+    onDone();
   };
 
   // This delete had NO confirmation at all — a single click on „Löschen" wiped
@@ -618,7 +601,19 @@ function PostEditor({
 }
 
 /** Manage the byline registry: list authors, add one, remove one. */
-function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () => void }) {
+function AuthorManager({
+  authors,
+  loading,
+  stale,
+  error,
+  onChange,
+}: {
+  authors: Author[];
+  loading: boolean;
+  stale: boolean;
+  error: Error | null;
+  onChange: () => void;
+}) {
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
   const [avatar, setAvatar] = useState("");
@@ -690,10 +685,19 @@ function AuthorManager({ authors, onChange }: { authors: Author[]; onChange: () 
   return (
     <div className="blog-authors">
       <h3>Autoren</h3>
-      {authors.length === 0 ? (
+      {error ? (
+        <p className="tds-alert tds-alert--danger" role="alert">
+          {authors.length === 0
+            ? `Autoren konnten nicht geladen werden (${error.message}).`
+            : `Die Autoren konnten nicht aktualisiert werden (${error.message}). Die angezeigten Daten können veraltet sein.`}
+        </p>
+      ) : null}
+      {loading ? (
+        <p><Spinner /></p>
+      ) : authors.length === 0 ? (
         <p className="text-xs opacity-60">Noch keine Autoren.</p>
       ) : (
-        <ul className="tds-list">
+        <ul className={staleClass(stale, "tds-list")} aria-busy={stale}>
           {authors.map((a) => (
             // `.tds-list__row` — the class this `<ul className="tds-list">`
             // was already asking for, and the one that brings `flex-wrap`.

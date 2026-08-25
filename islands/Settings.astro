@@ -1,10 +1,18 @@
 ---
 // Blog-CMS settings section, rendered by the base Einstellungen host via
-// virtual:frontend-settings. Hosts the BlogSettings island, which reads/writes the
-// core runtime settings store (`/admin/settings/blog-cms`): DeepL key,
-// auto-translate flag, and the rebuild token — DB-first, env fallback in the
-// backend. Secrets are stored AES-256-GCM-encrypted by the core.
+// virtual:frontend-settings.
+//
+// TWO islands, and the split is the point:
+//
+//   BlogSettings  the runtime settings store (`/admin/settings/blog-cms`):
+//                 DeepL key, auto-translate flag, rebuild token, cache token.
+//                 Secrets are stored AES-256-GCM-encrypted by the core.
+//   BlogRegistry  the managed blogs themselves — adding one, and saying where
+//                 its rebuild and its page cache point. This moved out of the
+//                 Blog-CMS content screen: connecting a blog is a once-per-blog
+//                 act, writing its articles is a daily one.
 import BlogSettings from "./BlogSettings.tsx";
+import BlogRegistry from "./BlogRegistry.tsx";
 // HYDRATION: `client:visible`, not `client:load`. /einstellungen stacks seven
 // settings panels vertically and all but the first are below the fold; eager
 // hydration fired seven islands and seven settings fetches on load. The page
@@ -15,4 +23,12 @@ import BlogSettings from "./BlogSettings.tsx";
 <div class="tds-settings-section__body">
   <h3>Blog-CMS</h3>
   <BlogSettings client:visible />
+
+  <h4>Blogs</h4>
+  <p class="marginalia">
+    Hier werden Blogs hinzugefügt. Die Beiträge selbst werden unter
+    <a class="link-underline" href="/blog">Blog-CMS</a> geschrieben — dort wird pro
+    Artikel ausgewählt, was geändert werden soll.
+  </p>
+  <BlogRegistry client:visible />
 </div>
