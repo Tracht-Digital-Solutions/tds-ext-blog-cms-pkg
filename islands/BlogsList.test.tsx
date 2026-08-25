@@ -255,9 +255,11 @@ describe("choosing a blog", () => {
 describe("the post editor", () => {
   /** Open a blog and start a new post. */
   async function newPost() {
-    await renderList();
+    // Register child requests before render: React may flush the selection
+    // effect synchronously on a fast runner.
     respond(/\/blogs\/haupt\/posts$/, { posts: [] });
     respond(/\/blog\/authors$/, { authors: [{ id: 7, name: "Julian" }] });
+    await renderList();
     const u = user();
     await u.click(await screen.findByRole("button", { name: "Neuer Beitrag" }));
     return u;
@@ -424,19 +426,22 @@ describe("existing posts", () => {
   const POST = { slug: "hallo", lang: "de", title: "Hallo", draft: 0, published_at: "2026-01-01" };
 
   async function openPost() {
-    await renderList();
+    // The single blog auto-selects during the first effect. All dependent
+    // handlers must exist before render or the fast CI scheduler can answer
+    // the posts request with the stub's empty default.
     respond(/\/blogs\/haupt\/posts$/, { posts: [POST] });
     respond(/\/blog\/authors$/, { authors: [] });
     respond(/\/posts\/hallo\?lang=de$/, { title: "Hallo", body: "Text", category: "news", draft: 0 });
+    await renderList();
     const u = user();
     await u.click(await screen.findByRole("button", { name: /Hallo/ }));
     return u;
   }
 
   it("lists an existing post", async () => {
-    await renderList();
     respond(/\/blogs\/haupt\/posts$/, { posts: [POST] });
     respond(/\/blog\/authors$/, { authors: [] });
+    await renderList();
     expect(await screen.findByRole("button", { name: /Hallo/ })).toBeTruthy();
   });
 
@@ -478,10 +483,10 @@ describe("existing posts", () => {
   });
 
   it("does not open a partial editor when loading the full post fails", async () => {
-    await renderList();
     respond(/\/blogs\/haupt\/posts$/, { posts: [POST] });
     respond(/\/blog\/authors$/, { authors: [] });
     respond(/\/posts\/hallo\?lang=de$/, {}, 500, "GET");
+    await renderList();
 
     await user().click(await screen.findByRole("button", { name: /Hallo/ }));
     await waitFor(() =>
