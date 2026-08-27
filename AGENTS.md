@@ -291,8 +291,10 @@ Verified by mutation: 23 deliberate breakages introduced, 23 caught.
 
 ## After a change
 
-Bump `version` in `package.json` + `composer.json` (lockstep), update docs,
-commit together.
+Update the docs and commit them with the code. **Do not touch `version` in
+`package.json` / `composer.json`** — `release.yml` → `_build.yml` bumps both in
+lockstep. The admin host currently pins this package with `^0.2.0`, so a future
+minor bump also requires repinning that consumer in the same release sequence.
 
 ## Mobile layout
 

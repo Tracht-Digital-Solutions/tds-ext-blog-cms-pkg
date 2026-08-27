@@ -92,10 +92,10 @@ describe("dependency hygiene", () => {
     expect(pkg.peerDependencies?.["@tracht-digital-solutions/tds-shared"]).toBe(">=0.33.0");
   });
 
-  it("stays inside the 0.1.x line the host pins with a caret", () => {
-    // The host pins each extension `^0.1.x`; under 0.x a caret means
-    // `>=0.1.x <0.2.0`, so a 0.2.0 here silently stops reaching the products.
-    expect(pkg.version).toMatch(/^0\.1\./);
+  it("stays inside the 0.2.x line the host pins with a caret", () => {
+    // The host pins this extension with `^0.2.0`; under 0.x a caret means
+    // `>=0.2.0 <0.3.0`, so a 0.3.0 here would silently stop reaching it.
+    expect(pkg.version).toMatch(/^0\.2\./);
   });
 
   it("exposes the scripts CI runs", () => {
