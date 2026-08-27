@@ -86,14 +86,6 @@ final class BlogCmsModuleTest extends TestCase
         );
     }
 
-    /** @param array<string,mixed> $body */
-    private function put(\Slim\App $app, string $path, array $body): \Psr\Http\Message\ResponseInterface
-    {
-        return $app->handle(
-            (new ServerRequestFactory())->createServerRequest('PUT', $path)->withParsedBody($body)
-        );
-    }
-
     public function testMetadata(): void
     {
         $module = new BlogCmsModule();
@@ -125,15 +117,17 @@ final class BlogCmsModuleTest extends TestCase
         self::assertSame(422, $res->getStatusCode());
     }
 
-    public function testRebuildConfigRequiresWrite(): void
+    public function testConnectionStatusRequiresRead(): void
     {
-        $res = $this->put($this->appWith(new FakeUser(perms: ['blog:read'])), '/blogs/demo/rebuild-config', ['rebuild_repo' => 'a/b']);
-        self::assertSame(403, $res->getStatusCode());
+        self::assertSame(401, $this->get($this->appWith(new FakeUser(auth: false)), '/blogs/demo/connection')->getStatusCode());
+        self::assertSame(403, $this->get($this->appWith(new FakeUser(perms: [])), '/blogs/demo/connection')->getStatusCode());
     }
 
-    public function testManualRebuildRequiresWrite(): void
+    public function testPairingRequiresWrite(): void
     {
-        $res = $this->post($this->appWith(new FakeUser(perms: ['blog:read'])), '/blogs/demo/rebuild', []);
+        $res = $this->post($this->appWith(new FakeUser(perms: ['blog:read'])), '/blogs/demo/connection/pairing', [
+            'origin' => 'https://blog.example',
+        ]);
         self::assertSame(403, $res->getStatusCode());
     }
 

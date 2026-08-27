@@ -10,11 +10,9 @@ import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
 /**
  * The managed-blogs registry, in Einstellungen.
  *
- * This is where a blog is ADDED — it used to sit on the content screen, above
- * the article list, next to a GitHub repository field and a deploy button. The
- * tests below are about the two things that cost something: the key can never
- * be corrected later, and the two rebuild buttons do completely different
- * things while sounding alike.
+ * This is where a blog is added and connected to its public site. The tests
+ * pin the immutable registry key, one-click pairing, explicit content binding
+ * and truthful cache outcomes.
  */
 
 type Hit = { status?: number; body?: unknown };
@@ -75,23 +73,24 @@ const BLOG = {
   id: 1,
   blog_key: "haupt",
   name: "Hauptblog",
-  rebuild_repo: "Tracht-Digital-Solutions/tds-blog-frontend",
-  rebuild_workflow: "dev.yml",
-  cache_url: "https://blog.tracht-digital.de",
   updated_at: "2026-01-01",
 };
 
-async function renderRegistry(blogs: unknown[] = [BLOG]) {
+async function renderRegistry(
+  blogs: unknown[] = [BLOG],
+  websites: unknown[] = [],
+) {
   // Method-scoped: `respond` puts the newest matcher first, so an unscoped GET
   // handler registered here would also answer a POST a test set up earlier.
   respond(/\/blogs$/, { blogs }, 200, "GET");
+  respond(/\/cms\/sites$/, { sites: websites }, 200, "GET");
+  respond(/\/blogs\/[^/]+\/connection$/, {}, 404, "GET");
   render(<BlogRegistry />);
   await waitFor(() => expect(calls.some((c) => pathOf(c.url) === "/blogs")).toBe(true));
   return user();
 }
 
 const posts = () => calls.filter((c) => c.method === "POST");
-const puts = () => calls.filter((c) => c.method === "PUT");
 
 describe("adding a blog", () => {
   it("posts a valid kebab key and name", async () => {
@@ -144,48 +143,38 @@ describe("adding a blog", () => {
   });
 });
 
-describe("per-blog configuration", () => {
-  it("saves the cache address and the rebuild target together", async () => {
+describe("per-blog API connection", () => {
+  it("pairs the blog and exposes a direct-install fallback only as a URL fragment", async () => {
+    const fallback = "https://blog.example/install#pairing_token=once-only-secret";
+    respond(/\/blogs\/haupt\/connection\/pairing$/, {
+      delivered: false,
+      fallback_url: fallback,
+    }, 201, "POST");
     const u = await renderRegistry();
-    const url = await screen.findByLabelText("Adresse des öffentlichen Blogs");
-    await u.clear(url);
-    await u.type(url, "https://neu.example");
-    await u.click(screen.getByRole("button", { name: "Konfiguration speichern" }));
-    await waitFor(() => expect(puts()).toHaveLength(1));
-    expect(pathOf(puts()[0]!.url)).toBe("/blogs/haupt/rebuild-config");
-    expect(puts()[0]!.body).toMatchObject({
-      cache_url: "https://neu.example",
-      rebuild_repo: "Tracht-Digital-Solutions/tds-blog-frontend",
-      rebuild_workflow: "dev.yml",
-    });
-  });
+    await u.type(await screen.findByLabelText("Adresse des öffentlichen Blogs"), "https://blog.example");
+    await u.click(screen.getByRole("button", { name: "Mit API verbinden" }));
 
-  it("keeps an invalid cache origin in the flow", async () => {
-    respond(/\/blogs\/haupt\/rebuild-config$/, {}, 422, "PUT");
-    const u = await renderRegistry();
-    const url = await screen.findByLabelText("Adresse des öffentlichen Blogs");
-    await u.clear(url);
-    await u.type(url, "https://user:pass@blog.example/path");
-    await u.click(screen.getByRole("button", { name: "Konfiguration speichern" }));
-
-    expect(await screen.findByRole("alert")).toHaveProperty(
-      "textContent",
-      expect.stringContaining("reine http(s)-Origin"),
-    );
-  });
-
-  it("keeps the two rebuild buttons on separate routes", async () => {
-    // They sound alike and are not: one dispatches a CI build that ships code,
-    // the other re-renders pages from content already stored. Confusing them
-    // costs minutes and a deploy.
-    const u = await renderRegistry();
-    await u.click(await screen.findByRole("button", { name: "Seiten-Cache neu bauen" }));
     await waitFor(() => expect(posts()).toHaveLength(1));
-    expect(pathOf(posts()[0]!.url)).toBe("/blogs/haupt/cache/rebuild");
+    expect(pathOf(posts()[0]!.url)).toBe("/blogs/haupt/connection/pairing");
+    expect(posts()[0]!.body).toEqual({ origin: "https://blog.example", profile: "blog", bindings: {} });
+    expect(JSON.stringify(posts()[0]!.body)).not.toContain("once-only-secret");
+    expect((await screen.findByRole("link", { name: "Einrichtungslink öffnen" })).getAttribute("href")).toBe(fallback);
+  });
 
-    await u.click(screen.getByRole("button", { name: "Jetzt neu bauen (CI)" }));
-    await waitFor(() => expect(posts()).toHaveLength(2));
-    expect(pathOf(posts()[1]!.url)).toBe("/blogs/haupt/rebuild");
+  it("requires an explicit website when more than one can provide global content", async () => {
+    respond(/\/blogs\/haupt\/connection\/pairing$/, { delivered: true }, 201, "POST");
+    const u = await renderRegistry([BLOG], [
+      { site_key: "agentur", name: "Agentur" },
+      { site_key: "landing", name: "Landingpage" },
+    ]);
+    await u.type(await screen.findByLabelText("Adresse des öffentlichen Blogs"), "https://blog.example");
+    const connect = screen.getByRole("button", { name: "Mit API verbinden" });
+    expect((connect as HTMLButtonElement).disabled).toBe(true);
+    await u.selectOptions(screen.getByLabelText(/Website-Inhalte verwenden/), "landing");
+    await u.click(connect);
+
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(posts()[0]!.body).toMatchObject({ bindings: { website: "landing" } });
   });
 
   it("asks the cache to rebuild everything, not one article", async () => {
@@ -199,34 +188,18 @@ describe("per-blog configuration", () => {
     expect(posts()[0]!.body).toEqual({});
   });
 
-  it("keeps a missing configuration in the flow rather than as a toast", async () => {
-    // A vanishing message would leave the operator pressing a button that can
-    // never work.
-    respond(/\/blogs\/haupt\/rebuild$/, {}, 422, "POST");
-    const u = await renderRegistry();
-    await u.click(await screen.findByRole("button", { name: "Jetzt neu bauen (CI)" }));
-    expect(await screen.findByRole("status")).toHaveProperty(
-      "textContent",
-      expect.stringContaining("kein Repository"),
-    );
-  });
-
-  it("reports the status when the cache rebuild fails outright", async () => {
-    respond(/\/blogs\/haupt\/cache\/rebuild$/, {}, 500, "POST");
+  it("keeps a remote cache failure in the flow", async () => {
+    respond(/\/blogs\/haupt\/cache\/rebuild$/, {}, 502, "POST");
     const u = await renderRegistry();
     await u.click(await screen.findByRole("button", { name: "Seiten-Cache neu bauen" }));
-    await waitFor(() => expect(toasts.length).toBeGreaterThan(0));
-    expect(toasts[toasts.length - 1]!.message).toContain("500");
+    expect(await screen.findByText(/Cache-Neubau ist fehlgeschlagen/)).toBeTruthy();
   });
 
-  it("keeps a missing cache token in the flow rather than claiming success", async () => {
+  it("keeps a missing connection in the flow rather than claiming success", async () => {
     respond(/\/blogs\/haupt\/cache\/rebuild$/, {}, 503, "POST");
     const u = await renderRegistry();
     await u.click(await screen.findByRole("button", { name: "Seiten-Cache neu bauen" }));
-    expect(await screen.findByRole("status")).toHaveProperty(
-      "textContent",
-      expect.stringContaining("Token"),
-    );
+    expect(await screen.findByText(/noch nicht vollständig mit der API verbunden/)).toBeTruthy();
     expect(toasts.some((t) => t.variant === "success")).toBe(false);
   });
 });

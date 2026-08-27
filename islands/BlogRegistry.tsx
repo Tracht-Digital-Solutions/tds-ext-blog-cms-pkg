@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
 import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
@@ -7,9 +7,19 @@ interface Blog {
   id: number;
   blog_key: string;
   name: string;
-  rebuild_repo?: string | null;
-  rebuild_workflow?: string | null;
-  cache_url?: string | null;
+}
+
+interface Connection {
+  origin?: string;
+  profile?: string;
+  status?: string;
+  connected_at?: string | null;
+  last_seen_at?: string | null;
+}
+
+interface WebsiteCandidate {
+  site_key: string;
+  name: string;
 }
 
 const api = apiFetch;
@@ -32,7 +42,9 @@ const api = apiFetch;
  */
 export default function BlogRegistry() {
   const blogsQuery = useCachedJson<{ blogs: Blog[] }>("/blogs");
+  const websitesQuery = useCachedJson<{ sites: WebsiteCandidate[] }>("/cms/sites");
   const blogs = blogsQuery.data?.blogs ?? [];
+  const websites = websitesQuery.data?.sites ?? [];
 
   const [key, setKey] = useState("");
   const [name, setName] = useState("");
@@ -130,7 +142,7 @@ export default function BlogRegistry() {
       ) : (
         <div className={staleClass(blogsQuery.stale, "tds-stack")} aria-busy={blogsQuery.stale}>
           {blogs.map((blog) => (
-            <BlogCard key={blog.id} blog={blog} />
+            <BlogCard key={blog.id} blog={blog} websites={websites} />
           ))}
         </div>
       )}
@@ -138,60 +150,89 @@ export default function BlogRegistry() {
   );
 }
 
-/** Rebuild target and page-cache address for one blog, plus the two buttons. */
-function BlogCard({ blog }: { blog: Blog }) {
-  const [repo, setRepo] = useState(blog.rebuild_repo ?? "");
-  const [workflow, setWorkflow] = useState(blog.rebuild_workflow ?? "dev.yml");
-  const [cacheUrl, setCacheUrl] = useState(blog.cache_url ?? "");
-  const [saving, setSaving] = useState(false);
-  const [configStatus, setConfigStatus] = useState<string | null>(null);
+/** One-click API connection and targeted page-cache refresh for one blog. */
+function BlogCard({ blog, websites }: { blog: Blog; websites: WebsiteCandidate[] }) {
+  const [connection, setConnection] = useState<Connection | null>(null);
+  const [origin, setOrigin] = useState("");
+  const [website, setWebsite] = useState("");
+  const [candidateKeys, setCandidateKeys] = useState<string[]>(websites.map((item) => item.site_key));
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [installUrl, setInstallUrl] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
   const [cacheStatus, setCacheStatus] = useState<string | null>(null);
-  const [rebuildStatus, setRebuildStatus] = useState<string | null>(null);
 
-  const saveConfig = async () => {
-    setConfigStatus(null);
-    setSaving(true);
-    const res = await api(`/blogs/${blog.blog_key}/rebuild-config`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        rebuild_repo: repo.trim(),
-        rebuild_workflow: workflow.trim(),
-        cache_url: cacheUrl.trim(),
-      }),
-    });
-    setSaving(false);
-    if (res.ok) {
-      setRepo(repo.trim());
-      setWorkflow(workflow.trim());
-      setCacheUrl(cacheUrl.trim().replace(/\/+$/, ""));
-      toast.success("Konfiguration gespeichert.");
-      invalidate("/blogs");
-    } else if (res.status === 422) {
-      setConfigStatus("Repository oder Cache-Adresse ist ungültig. Die Cache-Adresse muss eine reine http(s)-Origin ohne Pfad, Anmeldung, Query oder Fragment sein.");
-    } else {
-      toast.danger(`Speichern fehlgeschlagen (HTTP ${res.status}).`);
+  const loadConnection = async () => {
+    try {
+      const res = await api(`/blogs/${blog.blog_key}/connection`);
+      if (res.status === 404) {
+        setConnection(null);
+      } else if (res.ok) {
+        const body = await res.json();
+        const next = (body.connection ?? body) as Connection;
+        setConnection(next);
+        setOrigin(next.origin ?? "");
+      } else {
+        setConnectionStatus(`Verbindungsstatus konnte nicht geladen werden (HTTP ${res.status}).`);
+      }
+    } catch {
+      setConnectionStatus("Verbindungsstatus konnte nicht geladen werden (Netzwerkfehler).");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const rebuildRepository = async () => {
-    setRebuildStatus("Build wird ausgelöst …");
-    const res = await api(`/blogs/${blog.blog_key}/rebuild`, { method: "POST" });
+  useEffect(() => {
+    void loadConnection();
+  }, [blog.blog_key]);
+
+  useEffect(() => {
+    const keys = websites.map((item) => item.site_key);
+    setCandidateKeys(keys);
+    if (keys.length === 1) setWebsite(keys[0]);
+  }, [websites]);
+
+  const connect = async () => {
+    setConnecting(true);
+    setConnectionStatus(null);
+    setInstallUrl(null);
+    try {
+      const bindings = website.trim() === "" ? {} : { website: website.trim() };
+      const res = await api(`/blogs/${blog.blog_key}/connection/pairing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: origin.trim(), profile: "blog", bindings }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (Array.isArray(body.candidates)) setCandidateKeys(body.candidates.map(String));
+        setConnectionStatus(res.status === 422
+          ? (body.error ?? "Bitte eine reine HTTPS-Adresse und bei mehreren Websites den passenden Website-Schlüssel angeben.")
+          : `Verbinden fehlgeschlagen (HTTP ${res.status}).`);
+        return;
+      }
+      setInstallUrl(body.fallback_url ?? body.install_url ?? null);
+      if (body.delivered === true || body.connected === true) {
+        toast.success("Blog mit der API verbunden.");
+        await loadConnection();
+      } else {
+        setConnectionStatus("Die Website war nicht direkt erreichbar. Öffnen Sie den Einrichtungslink auf dem Blog-Server.");
+      }
+    } catch {
+      setConnectionStatus("Verbinden fehlgeschlagen (Netzwerkfehler).");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const disconnect = async () => {
+    const res = await api(`/blogs/${blog.blog_key}/connection`, { method: "DELETE" });
     if (res.ok) {
-      setRebuildStatus(null);
-      toast.success("Build ausgelöst.");
-    } else if (res.status === 503 || res.status === 422) {
-      // Both are missing CONFIGURATION (no token / no repo). They stay on
-      // screen, because they name something the operator has to go and fix;
-      // a vanishing message leaves them pressing a button that cannot work.
-      setRebuildStatus(
-        res.status === 503
-          ? "Kein Rebuild-Token hinterlegt (weiter oben in diesem Abschnitt)."
-          : "Für diesen Blog ist kein Repository hinterlegt.",
-      );
+      setConnection(null);
+      setInstallUrl(null);
+      toast.success("Verbindung getrennt.");
     } else {
-      setRebuildStatus(null);
-      toast.danger(`Build fehlgeschlagen (HTTP ${res.status}).`);
+      toast.danger(`Trennen fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -206,9 +247,11 @@ function BlogCard({ blog }: { blog: Blog }) {
       setCacheStatus(null);
       toast.success("Cache-Neubau wurde angefragt.");
     } else if (res.status === 422) {
-      setCacheStatus("Für diesen Blog ist keine Adresse hinterlegt.");
+      setCacheStatus("Die gespeicherte Website-Adresse ist ungültig.");
     } else if (res.status === 503) {
-      setCacheStatus("Der Seiten-Cache ist nicht vollständig konfiguriert (Token weiter oben prüfen).");
+      setCacheStatus("Der Blog ist noch nicht vollständig mit der API verbunden.");
+    } else if (res.status === 502) {
+      setCacheStatus("Der Blog ist erreichbar, aber der Cache-Neubau ist fehlgeschlagen. Bitte erneut versuchen.");
     } else {
       setCacheStatus(null);
       toast.danger(`Cache-Neubau fehlgeschlagen (HTTP ${res.status}).`);
@@ -228,51 +271,38 @@ function BlogCard({ blog }: { blog: Blog }) {
           className="field-boxed"
           type="url"
           inputMode="url"
-          value={cacheUrl}
-          onChange={(e) => setCacheUrl(e.target.value)}
+          value={origin}
+          onChange={(e) => setOrigin(e.target.value)}
           placeholder="https://blog.tracht-digital.de"
         />
       </label>
       <p className="marginalia">
-        Wohin ein veröffentlichter Beitrag den Seiten-Cache schickt. Ohne diese Adresse
-        wird gespeichert, aber der öffentliche Blog zeigt weiter die alte Fassung. Nur
-        die Origin eintragen (z. B. <code>https://blog.example</code>), keinen Pfad.
+        Der Blog übernimmt API-Schlüssel und Cache-Zugang automatisch. Nur die HTTPS-Adresse
+        ohne Pfad eingeben.
       </p>
 
-      <div className="tds-row">
+      {candidateKeys.length > 0 ? (
         <label className="block text-sm">
-          Repository
-          <input
-            className="field-boxed"
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-            placeholder="Tracht-Digital-Solutions/tds-blog-frontend"
-          />
+          Website-Inhalte verwenden {candidateKeys.length > 1 ? <span>(erforderlich)</span> : null}
+          <select className="field-boxed" value={website} onChange={(e) => setWebsite(e.target.value)}>
+            {candidateKeys.length > 1 ? <option value="">Website auswählen …</option> : null}
+            {candidateKeys.map((key) => {
+              const label = websites.find((item) => item.site_key === key)?.name;
+              return <option key={key} value={key}>{label ? `${label} (${key})` : key}</option>;
+            })}
+          </select>
         </label>
-        <label className="block text-sm">
-          Workflow
-          <input
-            className="field-boxed"
-            value={workflow}
-            onChange={(e) => setWorkflow(e.target.value)}
-            placeholder="dev.yml"
-          />
-        </label>
-      </div>
-      <p className="marginalia">
-        Nur für Code- und Design-Änderungen. Der Token liegt weiter oben in diesem Abschnitt.
-      </p>
-
-      {rebuildStatus ? (
-        <p className="tds-alert" role="status">
-          {rebuildStatus}
-        </p>
       ) : null}
-      {configStatus ? (
+
+      {loading ? <p><Spinner size="sm" /> Verbindungsstatus wird geladen …</p> : connection ? (
+        <p className="tds-alert tds-alert--success" role="status">Verbunden mit {connection.origin ?? origin}</p>
+      ) : <p className="tds-alert" role="status">Noch nicht mit der API verbunden.</p>}
+      {connectionStatus ? (
         <p className="tds-alert tds-alert--danger" role="alert">
-          {configStatus}
+          {connectionStatus}
         </p>
       ) : null}
+      {installUrl ? <p><a className="btn btn-ghost" href={installUrl}>Einrichtungslink öffnen</a></p> : null}
       {cacheStatus ? (
         <p className="tds-alert" role="status">
           {cacheStatus}
@@ -280,15 +310,13 @@ function BlogCard({ blog }: { blog: Blog }) {
       ) : null}
 
       <div className="tds-toolbar">
-        <button className="btn btn-primary" type="button" onClick={saveConfig} disabled={saving}>
-          {saving ? <Spinner size="sm" /> : "Konfiguration speichern"}
+        <button className="btn btn-primary" type="button" onClick={connect} disabled={connecting || origin.trim() === "" || (candidateKeys.length > 1 && website === "")}>
+          {connecting ? <Spinner size="sm" /> : connection ? "Neu verbinden" : "Mit API verbinden"}
         </button>
         <button className="btn btn-accent" type="button" onClick={rebuildCache}>
           Seiten-Cache neu bauen
         </button>
-        <button className="btn btn-ghost" type="button" onClick={rebuildRepository}>
-          Jetzt neu bauen (CI)
-        </button>
+        {connection ? <button className="btn btn-ghost" type="button" onClick={disconnect}>Verbindung trennen</button> : null}
       </div>
     </section>
   );

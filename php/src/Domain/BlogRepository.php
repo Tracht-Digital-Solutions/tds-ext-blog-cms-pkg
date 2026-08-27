@@ -22,7 +22,7 @@ final class BlogRepository
     public function blogs(): array
     {
         return $this->pdo->query(
-            'SELECT id, blog_key, name, rebuild_repo, rebuild_workflow, cache_url, updated_at FROM blog ORDER BY name, id'
+            'SELECT id, blog_key, name, cache_url, updated_at FROM blog ORDER BY name, id'
         )->fetchAll();
     }
 
@@ -35,28 +35,20 @@ final class BlogRepository
     public function findBlog(string $blogKey): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, blog_key, name, rebuild_repo, rebuild_workflow, cache_url FROM blog WHERE blog_key = :k LIMIT 1'
+            'SELECT id, blog_key, name, cache_url FROM blog WHERE blog_key = :k LIMIT 1'
         );
         $stmt->execute([':k' => $blogKey]);
         $row = $stmt->fetch();
         return $row === false ? null : $row;
     }
 
-    /**
-     * The blog's deploy hook and its page-cache origin.
-     *
-     * Two different jobs kept in one call because they sit on one form:
-     * `repo`/`workflow` dispatch a CI build and ship code, `cacheUrl` is the
-     * origin a save asks to re-render the pages one article dates. A full
-     * build here also re-runs the DeepL translations and one OG card per post,
-     * which is exactly why a typo correction must not need one.
-     */
-    public function updateBlogRebuild(int $blogId, ?string $repo, ?string $workflow, ?string $cacheUrl = null): void
+    /** @return array<string,mixed>|null */
+    public function findBlogById(int $blogId): ?array
     {
-        $stmt = $this->pdo->prepare(
-            'UPDATE blog SET rebuild_repo = :r, rebuild_workflow = :w, cache_url = :c WHERE id = :id'
-        );
-        $stmt->execute([':r' => $repo, ':w' => $workflow, ':c' => $cacheUrl, ':id' => $blogId]);
+        $stmt = $this->pdo->prepare('SELECT id, blog_key, name, cache_url FROM blog WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => $blogId]);
+        $row = $stmt->fetch();
+        return $row === false ? null : $row;
     }
 
     public function blogKeyExists(string $blogKey): bool

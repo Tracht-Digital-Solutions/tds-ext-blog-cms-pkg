@@ -9,16 +9,20 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\App;
 use Tds\Ext\BlogCms\Domain\BlogRepository;
 use Tds\Ext\BlogCms\Service\DeeplTranslator;
-use Tds\Ext\BlogCms\Service\RebuildTrigger;
 use Tds\Ext\BlogCms\Service\TranslationSync;
 use Tds\Ext\BlogCms\Support\CacheOrigin;
 use Psr\Container\ContainerInterface;
 use Tds\Frontend\Contract\AbstractModule;
 use Tds\Frontend\Contract\ApiDocSource;
 use Tds\Frontend\Contract\CacheEvent;
+use Tds\Frontend\Contract\ConnectedSiteCache;
 use Tds\Frontend\Contract\PermissionDef;
+use Tds\Frontend\Contract\ReportingSiteCache;
 use Tds\Frontend\Contract\SettingsStore;
 use Tds\Frontend\Contract\SiteCache;
+use Tds\Frontend\Contract\SiteConnectionException;
+use Tds\Frontend\Contract\SiteConnectionIdentity;
+use Tds\Frontend\Contract\SiteConnections;
 use Tds\Frontend\Contract\SiteKeyProtected;
 use Tds\Frontend\Contract\UserContext;
 
@@ -68,15 +72,6 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
         // else defines them, so binding unconditionally is the correct shape.
         $c?->set(BlogRepository::class, static fn ($c) => new BlogRepository($c->get(PDO::class)));
         if ($c !== null) {
-            $c->set(RebuildTrigger::class, static function ($c): RebuildTrigger {
-                // DB-first (settings store), env fallback for the rebuild PAT.
-                $token = self::setting($c)?->getSecret('blog-cms', 'rebuild_token');
-                if ($token === null || $token === '') {
-                    $token = (string) (getenv('BLOG_REBUILD_TOKEN') ?: '');
-                }
-                $ref = (string) (getenv('BLOG_REBUILD_REF') ?: 'main');
-                return new RebuildTrigger($token, $ref !== '' ? $ref : 'main');
-            });
             $c->set(TranslationSync::class, static function ($c): TranslationSync {
                 $store = self::setting($c);
                 // DeepL key: settings store → BLOG_DEEPL_API_KEY → DEEPL_API_KEY.
@@ -106,7 +101,7 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             // the public build falls back to its baked defaults, never a 500.
             try {
                 $repo = $c->get(BlogRepository::class);
-                $blog = $repo->defaultBlog();
+                $blog = self::requestBlog($c, $repo);
                 if ($blog === null) {
                     return self::json($res, ['posts' => [], 'nextCursor' => null]);
                 }
@@ -134,7 +129,7 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
         $app->get('/content/blog/popular', function (Request $req, Response $res) use ($c): Response {
             try {
                 $repo = $c->get(BlogRepository::class);
-                $blog = $repo->defaultBlog();
+                $blog = self::requestBlog($c, $repo);
                 if ($blog === null) {
                     return self::json($res, ['posts' => []]);
                 }
@@ -151,7 +146,7 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
         $app->get('/content/blog/{slug:[a-z0-9-]+}', function (Request $req, Response $res, array $args) use ($c): Response {
             try {
                 $repo = $c->get(BlogRepository::class);
-                $blog = $repo->defaultBlog();
+                $blog = self::requestBlog($c, $repo);
                 $lang = self::publicLang(($req->getQueryParams()['lang'] ?? null)) ?? 'de';
                 $row = $blog === null ? null : $repo->publicPost((int) $blog['id'], (string) $args['slug'], $lang);
                 if ($row === null) {
@@ -204,6 +199,91 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
                 return self::json($res, ['error' => 'blog_key already exists'], 409);
             }
             return self::json($res, ['id' => $repo->createBlog($key, $name)], 201);
+        });
+
+        $app->get('/blogs/{blog:[a-z0-9-]+}/connection', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'blog:read', $res)) !== null) {
+                return $deny;
+            }
+            if ($c->get(BlogRepository::class)->findBlog((string) $args['blog']) === null) {
+                return self::json($res, ['error' => 'Blog not found'], 404);
+            }
+            $connections = self::connections($c);
+            if ($connections === null) {
+                return self::json($res, ['error' => 'Site connection service is not available'], 503);
+            }
+            $connection = $connections->get('blog', (string) $args['blog']);
+            return $connection === null
+                ? self::json($res, ['error' => 'Connection not found'], 404)
+                : self::json($res, ['connection' => $connection->toArray()]);
+        });
+
+        $app->delete('/blogs/{blog:[a-z0-9-]+}/connection', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'blog:write', $res)) !== null) {
+                return $deny;
+            }
+            if ($c->get(BlogRepository::class)->findBlog((string) $args['blog']) === null) {
+                return self::json($res, ['error' => 'Blog not found'], 404);
+            }
+            $connections = self::connections($c);
+            if ($connections === null) {
+                return self::json($res, ['error' => 'Site connection service is not available'], 503);
+            }
+            return self::json($res, ['ok' => true, 'deleted' => $connections->delete('blog', (string) $args['blog'])]);
+        });
+
+        $app->post('/blogs/{blog:[a-z0-9-]+}/connection/pairing', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'blog:write', $res)) !== null) {
+                return $deny;
+            }
+            $repo = $c->get(BlogRepository::class);
+            if ($repo->findBlog((string) $args['blog']) === null) {
+                return self::json($res, ['error' => 'Blog not found'], 404);
+            }
+            $connections = self::connections($c);
+            if ($connections === null) {
+                return self::json($res, ['error' => 'Site connection service is not available'], 503);
+            }
+            $body = (array) $req->getParsedBody();
+            $origin = trim((string) ($body['origin'] ?? ''));
+            $provided = is_array($body['bindings'] ?? null) ? $body['bindings'] : [];
+            $bindings = ['blog' => (string) $args['blog']];
+            $candidates = self::bindingKeys($c, 'cms_site', 'site_key');
+            $website = trim((string) ($provided['website'] ?? ''));
+            if ($website !== '') {
+                if (!in_array($website, $candidates, true)) {
+                    return self::json($res, [
+                        'error' => 'Der gewählte Website-Schlüssel existiert nicht.',
+                        'candidates' => $candidates,
+                    ], 422);
+                }
+                $bindings['website'] = $website;
+            } else {
+                if (count($candidates) === 1) {
+                    $bindings['website'] = $candidates[0];
+                } elseif (count($candidates) > 1) {
+                    return self::json($res, [
+                        'error' => 'Bei mehreren Websites muss der Website-Schlüssel gewählt werden.',
+                        'candidates' => $candidates,
+                    ], 422);
+                }
+            }
+            try {
+                $pairing = $connections->createPairing(
+                    'blog',
+                    (string) $args['blog'],
+                    $origin,
+                    'blog',
+                    $bindings,
+                    ['/content/blog', '/content/topics', '/content/snippets', '/content/landing'],
+                );
+                return self::json($res, $connections->deliverPairing($pairing, self::apiBase($req))->toArray(), 201);
+            } catch (SiteConnectionException $e) {
+                return self::json($res, ['error' => $e->getMessage(), 'code' => $e->errorCode], $e->httpStatus);
+            } catch (\Throwable $e) {
+                error_log('[blog-cms] pairing failed: ' . $e->getMessage());
+                return self::json($res, ['error' => 'Pairing could not be created'], 503);
+            }
         });
 
         // --- authors (byline registry, blog-agnostic) -------------------------
@@ -311,76 +391,16 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             $repo->upsertPost((int) $blog['id'], (string) $args['slug'], $lang, $data);
             // Auto-translate the counterpart language (best-effort, published only).
             $translated = $c->get(TranslationSync::class)->afterSave((int) $blog['id'], (string) $args['slug'], $lang, $data);
-            // A published (non-draft) save re-bakes the static blog; drafts don't.
-            $cached = false;
+            $cache = self::emptyCacheReport('skipped');
             if (!$draft) {
-                self::fireRebuild($c->get(RebuildTrigger::class), $blog, 'post ' . (string) $args['slug'] . ' saved');
                 // Both languages when the counterpart was machine-translated in
                 // the same call: the English article changed too, and rebuilding
                 // only the saved language leaves it showing the old translation.
-                $cached = self::fireCache($c, $blog, [$translated
+                $cache = self::fireCache($c, $blog, [$translated
                     ? new CacheEvent('post', (string) $args['slug'])
                     : new CacheEvent('post', (string) $args['slug'], $lang)]);
             }
-            // `cached` reports whether THIS article's pages were actually asked
-            // to re-render. A draft never triggers one, which is why the editor
-            // must not infer it from `ok`.
-            return self::json($res, ['ok' => true, 'translated' => $translated, 'cached' => $cached]);
-        });
-
-        // Set a blog's rebuild target (repo/workflow); blank clears it.
-        $app->put('/blogs/{blog:[a-z0-9-]+}/rebuild-config', function (Request $req, Response $res, array $args) use ($c): Response {
-            if (($deny = self::require($c->get(UserContext::class), 'blog:write', $res)) !== null) {
-                return $deny;
-            }
-            $repo = $c->get(BlogRepository::class);
-            $blog = $repo->findBlog((string) $args['blog']);
-            if ($blog === null) {
-                return self::json($res, ['error' => 'Blog not found'], 404);
-            }
-            $body = (array) $req->getParsedBody();
-            $repoName = trim((string) ($body['rebuild_repo'] ?? ''));
-            $workflow = trim((string) ($body['rebuild_workflow'] ?? ''));
-            if ($repoName !== '' && preg_match('#^[\w.-]+/[\w.-]+$#', $repoName) !== 1) {
-                return self::json($res, ['error' => 'rebuild_repo must be "owner/name"'], 422);
-            }
-            // The page-cache token is sent to this address, so accept only a
-            // pure http(s) origin. Userinfo/path/query/fragment are not harmless
-            // paste mistakes here: they can disclose the token or hit a wrong
-            // endpoint.
-            $cacheUrl = trim((string) ($body['cache_url'] ?? ''));
-            $cacheOrigin = $cacheUrl !== '' ? CacheOrigin::normalize($cacheUrl) : null;
-            if ($cacheUrl !== '' && $cacheOrigin === null) {
-                return self::json($res, ['error' => 'cache_url must be a pure http(s) origin'], 422);
-            }
-            $repo->updateBlogRebuild(
-                (int) $blog['id'],
-                $repoName !== '' ? $repoName : null,
-                $workflow !== '' ? $workflow : null,
-                $cacheOrigin,
-            );
-            return self::json($res, ['ok' => true]);
-        });
-
-        // Manually fire a blog's rebuild ("Jetzt neu bauen").
-        $app->post('/blogs/{blog:[a-z0-9-]+}/rebuild', function (Request $req, Response $res, array $args) use ($c): Response {
-            if (($deny = self::require($c->get(UserContext::class), 'blog:write', $res)) !== null) {
-                return $deny;
-            }
-            $repo = $c->get(BlogRepository::class);
-            $blog = $repo->findBlog((string) $args['blog']);
-            if ($blog === null) {
-                return self::json($res, ['error' => 'Blog not found'], 404);
-            }
-            $trigger = $c->get(RebuildTrigger::class);
-            if (!$trigger->isConfigured()) {
-                return self::json($res, ['error' => 'Rebuild token not configured'], 503);
-            }
-            if (trim((string) ($blog['rebuild_repo'] ?? '')) === '') {
-                return self::json($res, ['error' => 'No rebuild repo configured for this blog'], 422);
-            }
-            self::fireRebuild($trigger, $blog, 'manual rebuild');
-            return self::json($res, ['ok' => true], 202);
+            return self::json($res, array_merge(['ok' => true, 'translated' => $translated], $cache));
         });
 
         // Catch up translations for pre-existing posts of a blog (button in tds-admin).
@@ -425,18 +445,16 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
                 $wrote ? $created++ : $skipped++;
             }
             if ($created > 0) {
-                self::fireRebuild($c->get(RebuildTrigger::class), $blog, 'translation backfill');
-                self::fireCache($c, $blog, [new CacheEvent('post')]);
+                $cache = self::fireCache($c, $blog, [new CacheEvent('post')]);
+            } else {
+                $cache = self::emptyCacheReport('skipped');
             }
-            return self::json($res, ['created' => $created, 'skipped' => $skipped]);
+            return self::json($res, array_merge(['created' => $created, 'translation_skipped' => $skipped], $cache));
         });
 
         // Rebuild a blog's PAGE CACHE ("Seiten-Cache neu bauen").
         //
-        // Not the same button as /rebuild above: that dispatches a CI build,
-        // re-runs the DeepL translations and re-renders one OG card per post.
-        // This re-renders pages from content that is already stored. An editor
-        // wants this one; it takes seconds.
+        // This re-renders pages from content already stored; it never deploys.
         $app->post('/blogs/{blog:[a-z0-9-]+}/cache/rebuild', function (Request $req, Response $res, array $args) use ($c): Response {
             if (($deny = self::require($c->get(UserContext::class), 'blog:write', $res)) !== null) {
                 return $deny;
@@ -446,21 +464,20 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             if ($blog === null) {
                 return self::json($res, ['error' => 'Blog not found'], 404);
             }
-            if (CacheOrigin::normalize((string) ($blog['cache_url'] ?? '')) === null) {
-                // Said in the flow rather than reported as a cheerful success:
-                // a rebuild nobody sent looks exactly like one that worked.
-                return self::json($res, ['error' => 'No cache URL configured for this blog'], 422);
+            if (self::connection($c, 'blog', (string) $args['blog']) === null) {
+                $legacyOrigin = trim((string) ($blog['cache_url'] ?? ''));
+                if ($legacyOrigin === '') {
+                    return self::json($res, ['error' => 'This blog is not connected'], 503);
+                }
+                if (CacheOrigin::normalize($legacyOrigin) === null) {
+                    return self::json($res, ['error' => 'The configured legacy cache origin is invalid'], 422);
+                }
             }
             $body = (array) $req->getParsedBody();
             $slug = isset($body['slug']) ? trim((string) $body['slug']) : '';
             $lang = isset($body['lang']) ? self::lang($body['lang']) : null;
-            $cached = self::fireCache($c, $blog, [new CacheEvent('post', $slug !== '' ? $slug : null, $lang)]);
-            if (!$cached) {
-                // A 202 means a request really left this API. Missing token or
-                // missing base binding is configuration, not a successful no-op.
-                return self::json($res, ['error' => 'Page cache is not fully configured'], 503);
-            }
-            return self::json($res, ['ok' => true, 'cached' => true], 202);
+            $cache = self::fireCache($c, $blog, [new CacheEvent('post', $slug !== '' ? $slug : null, $lang)]);
+            return self::json($res, array_merge(['ok' => $cache['cached']], $cache), self::manualCacheStatus($cache));
         });
 
         $app->delete('/blogs/{blog:[a-z0-9-]+}/posts/{slug:[a-z0-9-]+}', function (Request $req, Response $res, array $args) use ($c): Response {
@@ -476,9 +493,8 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             $repo->deletePost((int) $blog['id'], (string) $args['slug'], $lang);
             // A machine-translated counterpart was derived from this row — drop it too.
             $c->get(TranslationSync::class)->afterDelete((int) $blog['id'], (string) $args['slug'], $lang);
-            self::fireRebuild($c->get(RebuildTrigger::class), $blog, 'post ' . (string) $args['slug'] . ' deleted');
-            self::fireCache($c, $blog, [new CacheEvent('post', (string) $args['slug'], $lang)]);
-            return self::json($res, ['ok' => true]);
+            $cache = self::fireCache($c, $blog, [new CacheEvent('post', (string) $args['slug'], $lang)]);
+            return self::json($res, array_merge(['ok' => true], $cache));
         });
     }
 
@@ -502,15 +518,38 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
      *
      * @param array<string,mixed> $blog
      * @param CacheEvent[] $events
+     * @return array{cache_status:string,cached:bool,rebuilt:array,skipped:array,failed:array,unknownEvents:array}
      */
-    private static function fireCache(ContainerInterface $c, array $blog, array $events): bool
+    private static function fireCache(ContainerInterface $c, array $blog, array $events): array
     {
-        if (!$c->has(SiteCache::class) || $events === []) {
-            return false;
+        if ($events === []) {
+            return self::emptyCacheReport('skipped');
+        }
+        $connection = self::connection($c, 'blog', (string) $blog['blog_key']);
+        if ($connection !== null && $c->has(ConnectedSiteCache::class)) {
+            try {
+                $cache = $c->get(ConnectedSiteCache::class);
+                $reports = [];
+                foreach ($events as $event) {
+                    $reports[] = $cache->refresh('blog', (string) $blog['blog_key'], $event)->toArray();
+                }
+                return self::mergeCacheReports($reports);
+            } catch (\Throwable $e) {
+                error_log('[blog-cms] connected cache refresh failed: ' . $e->getMessage());
+                $report = self::emptyCacheReport('failed');
+                $report['failed'][] = ['reason' => 'transport_error'];
+                return $report;
+            }
+        }
+        if ($connection !== null) {
+            return self::emptyCacheReport('not_configured');
+        }
+        if (!$c->has(SiteCache::class)) {
+            return self::emptyCacheReport('not_configured');
         }
         $url = CacheOrigin::normalize((string) ($blog['cache_url'] ?? ''));
         if ($url === null) {
-            return false;
+            return self::emptyCacheReport('not_configured');
         }
         $token = self::setting($c)?->getSecret('blog-cms', 'cache_token');
         if ($token === null || $token === '') {
@@ -521,21 +560,125 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
         // Ask first: `rebuild()` is a documented no-op without a token, and a
         // no-op reported as a rebuild is the same lie as a missing URL.
         if (!$cache->isConfigured($url, $token)) {
-            return false;
+            return self::emptyCacheReport('not_configured');
+        }
+        if ($cache instanceof ReportingSiteCache) {
+            return $cache->rebuildWithResult($url, $token, $events)->toArray();
         }
         $cache->rebuild($url, $token, $events);
-
-        return true;
+        $report = self::emptyCacheReport('skipped');
+        $report['unknownEvents'][] = ['reason' => 'legacy_transport_has_no_result'];
+        return $report;
     }
 
-    /** @param array<string,mixed> $blog */
-    private static function fireRebuild(RebuildTrigger $trigger, array $blog, string $reason): void
+    private static function connections(ContainerInterface $c): ?SiteConnections
     {
-        $trigger->trigger(
-            isset($blog['rebuild_repo']) ? (string) $blog['rebuild_repo'] : null,
-            isset($blog['rebuild_workflow']) ? (string) $blog['rebuild_workflow'] : null,
-            $reason,
-        );
+        try {
+            return $c->has(SiteConnections::class) ? $c->get(SiteConnections::class) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private static function connection(ContainerInterface $c, string $type, string $id): mixed
+    {
+        try {
+            return self::connections($c)?->get($type, $id);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** A keyed request must resolve its explicit blog; only a keyless request may use the legacy default. */
+    private static function requestBlog(ContainerInterface $c, BlogRepository $repo): ?array
+    {
+        try {
+            if (!$c->has(SiteConnectionIdentity::class)) {
+                return $repo->defaultBlog();
+            }
+            $identity = $c->get(SiteConnectionIdentity::class);
+            if (!$identity->isConnected()) {
+                return $repo->defaultBlog();
+            }
+            $key = $identity->resourceType === 'blog'
+                ? $identity->resourceId
+                : $identity->binding('blog');
+            if (!is_string($key) || trim($key) === '') {
+                return null;
+            }
+            return ctype_digit($key) ? $repo->findBlogById((int) $key) : $repo->findBlog($key);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** @return list<string> */
+    private static function bindingKeys(ContainerInterface $c, string $table, string $column): array
+    {
+        try {
+            $rows = $c->get(PDO::class)->query("SELECT {$column} FROM {$table} ORDER BY {$column}")->fetchAll(PDO::FETCH_COLUMN);
+            return array_values(array_filter(array_map('strval', $rows), static fn (string $v): bool => $v !== ''));
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    private static function apiBase(Request $req): string
+    {
+        $uri = $req->getUri();
+        return $uri->getScheme() . '://' . $uri->getAuthority();
+    }
+
+    /** @return array{cache_status:string,cached:bool,rebuilt:array,skipped:array,failed:array,unknownEvents:array} */
+    private static function emptyCacheReport(string $status): array
+    {
+        return [
+            'cache_status' => $status,
+            'cached' => false,
+            'rebuilt' => [],
+            'skipped' => [],
+            'failed' => [],
+            'unknownEvents' => [],
+        ];
+    }
+
+    /** @param list<array<string,mixed>> $reports */
+    private static function mergeCacheReports(array $reports): array
+    {
+        if ($reports === []) {
+            return self::emptyCacheReport('skipped');
+        }
+        $merged = self::emptyCacheReport('refreshed');
+        $statuses = [];
+        $merged['cached'] = true;
+        foreach ($reports as $report) {
+            $statuses[] = (string) ($report['cache_status'] ?? 'failed');
+            $merged['cached'] = $merged['cached'] && (bool) ($report['cached'] ?? false);
+            foreach (['rebuilt', 'skipped', 'failed', 'unknownEvents'] as $key) {
+                $values = $report[$key] ?? [];
+                if (is_array($values)) {
+                    $merged[$key] = array_merge($merged[$key], $values);
+                }
+            }
+        }
+        if (in_array('failed', $statuses, true)) {
+            $merged['cache_status'] = 'failed';
+        } elseif (in_array('not_configured', $statuses, true)) {
+            $merged['cache_status'] = count(array_unique($statuses)) === 1 ? 'not_configured' : 'failed';
+        } elseif (!$merged['cached'] || in_array('skipped', $statuses, true)) {
+            $merged['cache_status'] = 'skipped';
+        }
+        return $merged;
+    }
+
+    /** @param array{cache_status:string,cached:bool} $report */
+    private static function manualCacheStatus(array $report): int
+    {
+        return match ($report['cache_status']) {
+            'refreshed' => 202,
+            'not_configured' => 503,
+            default => 502,
+        };
     }
 
     private static function require(UserContext $user, string $permission, Response $res): ?Response

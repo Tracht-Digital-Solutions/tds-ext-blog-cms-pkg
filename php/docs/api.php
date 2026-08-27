@@ -20,7 +20,7 @@ return [
         'method' => 'GET',
         'pattern' => '/content/blog',
         'tag' => 'Öffentlich',
-        'summary' => 'Veröffentlichte Beiträge des Standard-Blogs (Build-Quelle)',
+        'summary' => 'Veröffentlichte Beiträge des gebundenen Blogs (Build-Quelle)',
         'description' => 'Die Nachfolgerin von `tds-content-api`s offener `/content/blog`, '
             . 'unter demselben Pfad, damit Blog und Landingpage **unverändert** '
             . 'weiterlesen. Liefert nur veröffentlichte Beiträge in der camelCase-Form, '
@@ -61,8 +61,10 @@ return [
         'pattern' => '/content/blog/{slug:[a-z0-9-]+}',
         'tag' => 'Öffentlich',
         'summary' => 'Einen veröffentlichten Beitrag lesen',
-        'description' => 'Nur aus dem Standard-Blog und nur veröffentlicht — ein Entwurf '
-            . 'ist über diese Route nicht erreichbar und ergibt 404.',
+        'description' => 'Aus dem an den Site-Key gebundenen Blog und nur veröffentlicht — '
+            . 'ein Entwurf ist über diese Route nicht erreichbar und ergibt 404. Für die '
+            . 'Übergangsrelease bleibt der bisherige Standard-Blog die Rückfallauswahl, '
+            . 'wenn kein gebundener Site-Key vorliegt.',
         'auth' => 'public',
         'params' => [$slug, $langQuery],
         'responses' => [
@@ -114,10 +116,10 @@ return [
         'method' => 'GET',
         'pattern' => '/blogs',
         'tag' => 'Blogs',
-        'summary' => 'Alle Blogs mit ihrer Rebuild-Konfiguration',
+        'summary' => 'Alle registrierten Blogs',
         'permission' => 'blog:read',
         'responses' => [
-            ['status' => 200, 'description' => '`{blogs: [{id, blog_key, name, rebuild_repo, rebuild_workflow, is_default}]}`'],
+            ['status' => 200, 'description' => '`{blogs: [{id, blog_key, name, cache_url, updated_at}]}` — `cache_url` ist nur der Übergangs-Fallback; neue Verbindungen stehen in der Verbindungsressource.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `blog:read`.'],
         ],
@@ -138,6 +140,63 @@ return [
             ['status' => 403, 'description' => 'Kein `blog:write`.'],
             ['status' => 409, 'description' => '`blog_key` ist bereits vergeben.'],
             ['status' => 422, 'description' => '`blog_key` ist kein Kebab-Slug, oder `name` fehlt.'],
+        ],
+    ],
+    [
+        'method' => 'GET',
+        'pattern' => '/blogs/{blog:[a-z0-9-]+}/connection',
+        'tag' => 'Verbindungen',
+        'summary' => 'API-Verbindung eines Blogs lesen',
+        'description' => 'Liefert ausschließlich die öffentliche Identität und echte '
+            . 'Statuszeitpunkte. Site-Key und Cache-Token werden nie ausgegeben.',
+        'permission' => 'blog:read',
+        'params' => [$blog],
+        'responses' => [
+            ['status' => 200, 'description' => '`{connection: {resource_type, resource_id, origin, profile, bindings, scopes, status, paired_at, last_seen_at}}`'],
+            ['status' => 401, 'description' => 'Keine Sitzung.'],
+            ['status' => 403, 'description' => 'Kein `blog:read`.'],
+            ['status' => 404, 'description' => 'Unbekannter Blog oder noch keine Verbindung.'],
+            ['status' => 503, 'description' => 'Der zentrale Verbindungsdienst ist nicht verfügbar.'],
+        ],
+    ],
+    [
+        'method' => 'DELETE',
+        'pattern' => '/blogs/{blog:[a-z0-9-]+}/connection',
+        'tag' => 'Verbindungen',
+        'summary' => 'API-Verbindung eines Blogs trennen',
+        'permission' => 'blog:write',
+        'params' => [$blog],
+        'responses' => [
+            ['status' => 200, 'description' => '`{ok: true, deleted: bool}`'],
+            ['status' => 401, 'description' => 'Keine Sitzung.'],
+            ['status' => 403, 'description' => 'Kein `blog:write`.'],
+            ['status' => 404, 'description' => 'Unbekannter Blog.'],
+            ['status' => 503, 'description' => 'Der zentrale Verbindungsdienst ist nicht verfügbar.'],
+        ],
+    ],
+    [
+        'method' => 'POST',
+        'pattern' => '/blogs/{blog:[a-z0-9-]+}/connection/pairing',
+        'tag' => 'Verbindungen',
+        'summary' => 'Blog mit seiner öffentlichen Site verbinden oder neu verbinden',
+        'description' => 'Erzeugt eine zehn Minuten gültige, einmal verwendbare Freigabe '
+            . 'und liefert sie serverseitig direkt an die HTTPS-Origin. Schlägt das fehl, '
+            . 'enthält `fallback_url` den Einrichtungslink; das Geheimnis steht nur im '
+            . 'URL-Fragment. Eine bestehende Verbindung bleibt bis zur Finalisierung aktiv.',
+        'permission' => 'blog:write',
+        'params' => [
+            $blog,
+            ['in' => 'body', 'name' => 'origin', 'type' => 'https-origin', 'required' => true, 'description' => 'Reine HTTPS-Origin des Blogs, ohne Zugangsdaten, Pfad, Query oder Fragment.'],
+            ['in' => 'body', 'name' => 'bindings', 'type' => 'object', 'description' => 'Optional `{website: "<site_key>"}`. Bei genau einer Website wird automatisch gebunden; bei mehreren ist die Auswahl Pflicht.'],
+        ],
+        'responses' => [
+            ['status' => 201, 'description' => 'Geheimnisfreier Lieferstatus mit optionaler `connection` oder `fallback_url`.'],
+            ['status' => 401, 'description' => 'Keine Sitzung.'],
+            ['status' => 403, 'description' => 'Kein `blog:write`.'],
+            ['status' => 404, 'description' => 'Unbekannter Blog.'],
+            ['status' => 422, 'description' => 'Ungültige Origin, fehlende Auswahl bei mehreren Websites oder unbekannter Website-Schlüssel.'],
+            ['status' => 429, 'description' => 'Zu viele Pairing-Versuche.'],
+            ['status' => 503, 'description' => 'Pairing- oder Verbindungsdienst ist nicht verfügbar.'],
         ],
     ],
     [
@@ -229,9 +288,7 @@ return [
         'description' => 'Ein Upsert über (Blog, Slug, Sprache). Drei Seiteneffekte: das '
             . 'Speichern **löscht das `machine_translated`-Kennzeichen** (Handarbeit '
             . 'sticht Maschine), es **legt die Gegensprache maschinell an** (DeepL, '
-            . 'best effort, nur für Veröffentlichtes), und ein '
-            . '**veröffentlichter** Speichervorgang **stößt den Rebuild des statischen '
-            . 'Blogs an** — ein Entwurf nicht. `published_at` wird beim ersten '
+            . 'best effort, nur für Veröffentlichtes). `published_at` wird beim ersten '
             . 'Veröffentlichen automatisch gesetzt. Eine unbekannte `author_id` wird '
             . 'stillschweigend verworfen statt die Anfrage abzulehnen: eine gelöschte '
             . 'Byline soll das Speichern nicht blockieren.'
@@ -258,7 +315,7 @@ return [
             ['in' => 'body', 'name' => 'published_at', 'type' => 'datetime', 'description' => 'Nur für Veröffentlichtes; leer ⇒ jetzt.'],
         ],
         'responses' => [
-            ['status' => 200, 'description' => '`{ok: true, translated: bool, cached: bool}` — '
+            ['status' => 200, 'description' => '`{ok: true, translated: bool, cache_status, cached, rebuilt, skipped, failed, unknownEvents}` — '
                 . '`translated` sagt, ob die Gegensprache geschrieben wurde; `cached`, ob '
                 . 'wirklich ein Cache-Neubau rausgegangen ist. Ein Entwurf löst nie einen '
                 . 'aus, deshalb darf die Oberfläche das nicht aus `ok` ableiten.'],
@@ -283,55 +340,12 @@ return [
         ],
     ],
     [
-        'method' => 'PUT',
-        'pattern' => '/blogs/{blog:[a-z0-9-]+}/rebuild-config',
-        'tag' => 'Rebuild',
-        'summary' => 'Rebuild-Ziel eines Blogs setzen',
-        'description' => 'Welches Repository und welcher Workflow nach einer Veröffentlichung '
-            . 'gebaut werden. Leere Werte löschen die Konfiguration.',
-        'permission' => 'blog:write',
-        'params' => [
-            $blog,
-            ['in' => 'body', 'name' => 'rebuild_repo', 'type' => 'string', 'description' => 'Muss `owner/name` sein. Leer löscht.'],
-            ['in' => 'body', 'name' => 'rebuild_workflow', 'type' => 'string', 'description' => 'Dateiname des Workflows.'],
-            ['in' => 'body', 'name' => 'cache_url', 'type' => 'string', 'description' => 'Reine http(s)-Origin der öffentlichen Site (z. B. `https://blog.tracht-digital.de`). Userinfo, Pfad, Query und Fragment sind verboten; leer löscht.'],
-        ],
-        'responses' => [
-            ['status' => 200, 'description' => '`{ok: true}`'],
-            ['status' => 401, 'description' => 'Keine Sitzung.'],
-            ['status' => 403, 'description' => 'Kein `blog:write`.'],
-            ['status' => 404, 'description' => 'Unbekannter Blog.'],
-            ['status' => 422, 'description' => '`rebuild_repo` ist nicht `owner/name`, oder `cache_url` ist keine reine http(s)-Origin.'],
-        ],
-    ],
-    [
-        'method' => 'POST',
-        'pattern' => '/blogs/{blog:[a-z0-9-]+}/rebuild',
-        'tag' => 'Rebuild',
-        'summary' => 'Rebuild eines Blogs von Hand auslösen',
-        'description' => 'Zwei getrennte Gründe für ein Nein: gar kein Rebuild-Token '
-            . 'hinterlegt (503, betrifft alle Blogs) oder kein Repository an diesem Blog '
-            . '(422, betrifft nur diesen). **202**, weil der Build danach erst anläuft.',
-        'permission' => 'blog:write',
-        'params' => [$blog],
-        'responses' => [
-            ['status' => 202, 'description' => '`{ok: true}` — der Workflow wurde angestoßen.'],
-            ['status' => 401, 'description' => 'Keine Sitzung.'],
-            ['status' => 403, 'description' => 'Kein `blog:write`.'],
-            ['status' => 404, 'description' => 'Unbekannter Blog.'],
-            ['status' => 422, 'description' => 'Für diesen Blog ist kein Rebuild-Repository konfiguriert.'],
-            ['status' => 503, 'description' => 'Kein Rebuild-Token konfiguriert.'],
-        ],
-    ],
-    [
         'method' => 'POST',
         'pattern' => '/blogs/{blog:[a-z0-9-]+}/cache/rebuild',
-        'tag' => 'Rebuild',
+        'tag' => 'Verbindungen',
         'summary' => 'Seiten-Cache eines Blogs neu bauen',
-        'description' => 'Nicht zu verwechseln mit `/rebuild`: das stößt einen CI-Build an, '
-            . 'lässt die DeepL-Übersetzungen erneut laufen und rendert je Beitrag eine '
-            . 'OG-Karte neu. Das hier rendert Seiten aus bereits gespeichertem Inhalt — '
-            . 'Sekunden statt Minuten, und der Weg, den eine Redakteurin nimmt. Ohne '
+        'description' => 'Rendert Seiten aus bereits gespeichertem Inhalt, ohne Build oder '
+            . 'Deployment. Ohne '
             . '`slug` werden die Übersichts- und Archivseiten erfasst, mit `slug` '
             . 'zusätzlich der Artikel samt seiner Kategorie-, Tag- und Autorenseiten.',
         'permission' => 'blog:write',
@@ -341,12 +355,13 @@ return [
             ['in' => 'body', 'name' => 'lang', 'type' => 'string', 'description' => '`de` oder `en`; ohne Angabe beide Sprachbäume.'],
         ],
         'responses' => [
-            ['status' => 202, 'description' => '`{ok: true, cached: true}` — der Neubau wurde angefragt. Der Aufruf scheitert nie an einer nicht erreichbaren Site.'],
+            ['status' => 202, 'description' => '`{ok: true, cache_status: "refreshed", cached: true, rebuilt, skipped, failed, unknownEvents}`'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `blog:write`.'],
             ['status' => 404, 'description' => 'Unbekannter Blog.'],
-            ['status' => 422, 'description' => 'Für diesen Blog ist keine Cache-URL konfiguriert.'],
-            ['status' => 503, 'description' => 'Die Cache-Anbindung ist nicht vollständig konfiguriert (Token oder Basisdienst fehlt).'],
+            ['status' => 422, 'description' => 'Die gespeicherte Übergangs-Origin ist ungültig.'],
+            ['status' => 503, 'description' => 'Der Blog ist nicht verbunden oder die Cache-Anbindung ist nicht vollständig konfiguriert.'],
+            ['status' => 502, 'description' => 'Die öffentliche Site meldete einen Fehler oder nur einen Teilerfolg.'],
         ],
     ],
     [
@@ -361,7 +376,7 @@ return [
         'permission' => 'blog:write',
         'params' => [$blog],
         'responses' => [
-            ['status' => 200, 'description' => '`{created, skipped}`'],
+            ['status' => 200, 'description' => '`{created, translation_skipped, cache_status, cached, rebuilt, skipped, failed, unknownEvents}`'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `blog:write`.'],
             ['status' => 404, 'description' => 'Unbekannter Blog.'],

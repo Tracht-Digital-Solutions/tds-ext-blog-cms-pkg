@@ -11,8 +11,6 @@ interface Blog {
   id: number;
   blog_key: string;
   name: string;
-  rebuild_repo?: string | null;
-  rebuild_workflow?: string | null;
   /**
    * Origin of the public blog whose page cache a save rebuilds. Configured
    * under Einstellungen → Blog-CMS, not here.
@@ -81,9 +79,8 @@ const EMPTY_POST: PostDraft = {
  *
  * ### What is deliberately NOT here any more
  *
- * Adding a blog, and configuring where its rebuild and its page cache point,
- * moved to **Einstellungen → Blog-CMS** (`BlogRegistry.tsx`). A GitHub
- * repository field and a deploy button were sitting above the article list, on
+ * Adding and connecting a blog moved to **Einstellungen → Blog-CMS**
+ * (`BlogRegistry.tsx`). Connection controls were sitting above the article list, on
  * the screen someone opens to write. This one answers a single question: what
  * does this article say.
  *
