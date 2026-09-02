@@ -122,10 +122,29 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
   - **Idempotent by `(blog_id, slug, lang)`**, and `down()` deletes only rows
     still carrying the seeded title *and* body verbatim — an operator's edits
     survive a rollback. `down()` deliberately keeps the blog and author rows.
-  - **The slugs are mirrored in `tds-landingpage-frontend`** (`lib/content.ts`'s
-    `topicFallback` and tds-shared's `blog.posts` fallback teasers). Renaming a
-    slug here without changing those publishes links to 404s, and nothing in
-    either build checks it.
+  - **The slugs are mirrored outside this repo** — tds-shared's `blog.posts`
+    fallback teasers (which `tds-landingpage-frontend`'s `Journal.astro` falls
+    back to) and `tds-blog-frontend`'s `lib/demoContent.ts`. Renaming a slug
+    here without changing those publishes links to 404s, and nothing in either
+    build checks it. (`lib/content.ts`'s `topicFallback` in the landing page is
+    gone; only the tds-shared list remains.)
+- **Every further article is its own migration.** `20260728000007` has long
+  since run in production and Phinx will never execute it again, so a new entry
+  in its `POSTS` array would reach a fresh installation and nothing else.
+  `BlogCmsSeedPostShopMigration` (`20260728000010`) is the pattern to copy: same
+  row shape, same INSERT, same idempotency and the same verbatim-match `down()`.
+- **`BlogCmsSeoRefreshMeta` (`20260728000011`)** shortens the eight seeded
+  `meta_description` values that exceeded 160 characters, guarded by
+  `WHERE meta_description = :old` so an edited description is never overwritten
+  and a second run changes nothing. That guard — the old value rather than the
+  body — is the pattern for any later content correction.
+- `php/tests/SeedContentTest.php` reads the constants out of the migration files
+  (through a stub for Phinx's base class, which is not a dependency here) and
+  checks what otherwise fails silently: DE/EN completeness, `published_at`
+  shape, tags usable as URL segments, column limits, effective meta descriptions
+  within 80–160, no dead entry in the refresh map, `draft = 0`/
+  `machine_translated = 0` in both INSERTs, and file-name↔class-name mapping
+  with unique version prefixes.
 - Routes are closures resolving `UserContext`/`BlogRepository` from the container
   at request time (rebound per request by the core AuthMiddleware).
 - DB-backed tests skip without `TDS_TEST_DB_DSN`; the committed test covers
@@ -244,8 +263,11 @@ Verified by mutation: 23 deliberate breakages introduced, 23 caught.
   dropdown in the editor + an "Autoren" manager (add/remove) under the post list.
 - **CP6:** **SEO fields** — `blog_post.meta_description` (≤300) + `tags` (≤200,
   comma-separated keyword tokens), both nullable (a post without them falls back to
-  excerpt/category on the public page). Surfaced in the editor, returned by
-  `getPost` for the static blog to bake `<meta name=description>`/keywords.
+  excerpt/category on the public page). Surfaced in the editor and returned by
+  `getPost` — **only on the full-post read**, not in the list payload, so a
+  consumer that renders `<meta name=description>` has to fetch the post itself
+  (`tds-blog-frontend` does, and falls back to the excerpt when the field is
+  empty).
   TranslationSync translates the meta description onto the counterpart (batched with
   the core fields) but keeps `tags` identical across languages (stable keyword
   tokens). Migration `AddBlogCmsSeo`.
