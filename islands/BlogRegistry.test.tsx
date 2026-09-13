@@ -199,6 +199,21 @@ describe("per-blog API connection", () => {
     expect(await screen.findByText("Verbinden fehlgeschlagen (HTTP 503).")).toBeTruthy();
   });
 
+  it("says why the blog did not take the pairing directly", async () => {
+    // The refusal happens on the blog's host; the API relays its code.
+    respond(/\/blogs\/haupt\/connection\/pairing$/, {
+      delivered: false,
+      error: "HTTP 422: invalid_origin",
+      fallback_url: "https://blog.example/install#pairing_token=once-only-secret",
+    }, 201, "POST");
+    const u = await renderRegistry();
+    await u.type(await screen.findByLabelText("Adresse des öffentlichen Blogs"), "https://blog.example");
+    await u.click(screen.getByRole("button", { name: "Mit API verbinden" }));
+    expect(await screen.findByText(
+      "Der Blog hat die Verbindung nicht direkt angenommen (HTTP 422: invalid_origin). Öffnen Sie den Einrichtungslink auf dem Blog-Server.",
+    )).toBeTruthy();
+  });
+
   it("asks the cache to rebuild everything, not one article", async () => {
     // This button is the catch-up for when a save's targeted rebuild did not
     // land, so it must not be targeted itself.

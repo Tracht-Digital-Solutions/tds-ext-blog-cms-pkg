@@ -219,7 +219,10 @@ function BlogCard({ blog, websites }: { blog: Blog; websites: WebsiteCandidate[]
         toast.success("Blog mit der API verbunden.");
         await loadConnection();
       } else {
-        setConnectionStatus("Die Website war nicht direkt erreichbar. Öffnen Sie den Einrichtungslink auf dem Blog-Server.");
+        // `error` is why the hand-over failed — "HTTP 422: invalid_origin" is
+        // the blog's own refusal, which otherwise only its log would show.
+        const why = typeof body.error === "string" && body.error.trim() !== "" ? ` (${body.error.trim()})` : "";
+        setConnectionStatus(`Der Blog hat die Verbindung nicht direkt angenommen${why}. Öffnen Sie den Einrichtungslink auf dem Blog-Server.`);
       }
     } catch {
       setConnectionStatus("Verbinden fehlgeschlagen (Netzwerkfehler).");
