@@ -206,9 +206,12 @@ function BlogCard({ blog, websites }: { blog: Blog; websites: WebsiteCandidate[]
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (Array.isArray(body.candidates)) setCandidateKeys(body.candidates.map(String));
+        // The API names the cause (a missing SETTINGS_ENCRYPTION_KEY, a server
+        // fault) — for an operator without log access, the only diagnosis.
+        const reason = typeof body.error === "string" && body.error.trim() !== "" ? body.error.trim() : null;
         setConnectionStatus(res.status === 422
-          ? (body.error ?? "Bitte eine reine HTTPS-Adresse und bei mehreren Websites den passenden Website-Schlüssel angeben.")
-          : `Verbinden fehlgeschlagen (HTTP ${res.status}).`);
+          ? (reason ?? "Bitte eine reine HTTPS-Adresse und bei mehreren Websites den passenden Website-Schlüssel angeben.")
+          : `Verbinden fehlgeschlagen (HTTP ${res.status})${reason ? `: ${reason}` : "."}`);
         return;
       }
       setInstallUrl(body.fallback_url ?? body.install_url ?? null);
