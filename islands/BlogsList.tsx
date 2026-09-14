@@ -325,8 +325,12 @@ function BlogPosts({ blog }: { blog: Blog }) {
         <ul className={staleClass(postsQuery.stale, "tds-list")} aria-busy={postsQuery.stale}>
           {posts.map((p) => (
             <li key={`${p.slug}-${p.lang}`} className="tds-list__row">
-              <button className="btn btn-ghost" type="button" onClick={() => openPost(p)}>
-                <strong>{p.title}</strong> <code>{p.slug}</code>
+              {/* `flex-wrap` + `min-w-0` + a breakable slug: `.btn` is an
+                  unwrapping inline-flex, so title, slug and chips added up to
+                  one line. On a phone the row reached 505px in a 390px
+                  viewport, and `body { overflow-x: hidden }` clipped it. */}
+              <button className="btn btn-ghost flex-wrap text-left min-w-0 max-w-full" type="button" onClick={() => openPost(p)}>
+                <strong>{p.title}</strong> <code className="break-all">{p.slug}</code>
                 <span className="chip chip--neutral">{p.lang}</span>
                 <span className={`chip chip--${p.draft ? "warning" : "success"}`}>
                   {p.draft ? "Entwurf" : "Veröffentlicht"}
