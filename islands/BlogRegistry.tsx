@@ -64,11 +64,20 @@ export default function BlogRegistry() {
     }
     setFormError(null);
     setCreating(true);
-    const res = await api("/blogs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ blog_key: blogKey, name: name.trim() }),
-    });
+    let res: Response;
+    try {
+      res = await api("/blogs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blog_key: blogKey, name: name.trim() }),
+      });
+    } catch {
+      // apiFetch rejects when the request never reaches the API; uncaught, the
+      // button stayed on its spinner with the form locked.
+      setCreating(false);
+      toast.danger("Anlegen fehlgeschlagen (Netzwerkfehler).");
+      return;
+    }
     setCreating(false);
     if (res.ok) {
       setKey("");
@@ -232,7 +241,13 @@ function BlogCard({ blog, websites }: { blog: Blog; websites: WebsiteCandidate[]
   };
 
   const disconnect = async () => {
-    const res = await api(`/blogs/${blog.blog_key}/connection`, { method: "DELETE" });
+    let res: Response;
+    try {
+      res = await api(`/blogs/${blog.blog_key}/connection`, { method: "DELETE" });
+    } catch {
+      toast.danger("Trennen fehlgeschlagen (Netzwerkfehler).");
+      return;
+    }
     if (res.ok) {
       setConnection(null);
       setInstallUrl(null);
@@ -244,11 +259,18 @@ function BlogCard({ blog, websites }: { blog: Blog; websites: WebsiteCandidate[]
 
   const rebuildCache = async () => {
     setCacheStatus("Seiten-Cache wird neu gebaut …");
-    const res = await api(`/blogs/${blog.blog_key}/cache/rebuild`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    let res: Response;
+    try {
+      res = await api(`/blogs/${blog.blog_key}/cache/rebuild`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    } catch {
+      setCacheStatus(null);
+      toast.danger("Cache-Neubau fehlgeschlagen (Netzwerkfehler).");
+      return;
+    }
     if (res.ok) {
       setCacheStatus(null);
       toast.success("Cache-Neubau wurde angefragt.");

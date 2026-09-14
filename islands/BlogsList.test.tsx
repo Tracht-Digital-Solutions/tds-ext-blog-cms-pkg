@@ -19,7 +19,7 @@ import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
  * (`BlogRegistry.test.tsx`). What is left here is writing.
  */
 
-type Hit = { status?: number; body?: unknown };
+type Hit = { status?: number; body?: unknown; unreachable?: boolean };
 type Handler = (url: string, init?: RequestInit) => Hit | Promise<Hit | undefined> | undefined;
 
 let handlers: Handler[] = [];
@@ -38,6 +38,15 @@ function respond(match: RegExp, body: unknown, status = 200, method?: string) {
     if (!match.test(pathOf(url))) return undefined;
     if (method && (init?.method ?? "GET") !== method) return undefined;
     return { status, body };
+  });
+}
+
+/** A request that never reaches the API: fetch itself rejects, as it does offline. */
+function unreachable(match: RegExp, method?: string) {
+  handlers.unshift((url, init) => {
+    if (!match.test(pathOf(url))) return undefined;
+    if (method && (init?.method ?? "GET") !== method) return undefined;
+    return { unreachable: true };
   });
 }
 
@@ -71,6 +80,7 @@ beforeEach(() => {
       for (const h of handlers) {
         const hit = await h(url, init);
         if (hit) {
+          if (hit.unreachable) throw new TypeError("Failed to fetch");
           const status = hit.status ?? 200;
           return {
             ok: status >= 200 && status < 300,
@@ -374,6 +384,18 @@ describe("the post editor", () => {
 await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("409"))).toBe(true));
   });
 
+  it("keeps the editor open when the save never reaches the API", async () => {
+    // fetch rejects offline; unhandled, the save ended without a word.
+    const u = await newPost();
+    unreachable(/\/posts\/slug$/, "PUT");
+    await u.type(screen.getByPlaceholderText("mein-beitrag"), "slug");
+    await u.type(screen.getByPlaceholderText("Titel des Beitrags"), "T");
+    await u.type(screen.getByPlaceholderText(/Text in Markdown/), "B");
+    await u.click(screen.getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true));
+    expect((screen.getByPlaceholderText(/Text in Markdown/) as HTMLTextAreaElement).value).toBe("B");
+  });
+
   it("returns to the post list after a successful save", async () => {
     const u = await newPost();
     await u.type(screen.getByPlaceholderText("mein-beitrag"), "slug");
@@ -494,6 +516,27 @@ describe("existing posts", () => {
     );
     expect(screen.queryByRole("heading", { name: "Beitrag bearbeiten" })).toBeNull();
   });
+
+  it("says so when the full post never arrives because the API is unreachable", async () => {
+    respond(/\/blogs\/haupt\/posts$/, { posts: [POST] });
+    respond(/\/blog\/authors$/, { authors: [] });
+    unreachable(/\/posts\/hallo\?lang=de$/, "GET");
+    await renderList();
+    await user().click(await screen.findByRole("button", { name: /Hallo/ }));
+    await waitFor(() =>
+      expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true),
+    );
+    expect(screen.queryByRole("heading", { name: "Beitrag bearbeiten" })).toBeNull();
+  });
+
+  it("keeps the post open when the delete never reaches the API", async () => {
+    const u = await openPost();
+    unreachable(/\/posts\/hallo\?lang=de$/, "DELETE");
+    await u.click(await screen.findByRole("button", { name: "Löschen" }));
+    await u.click(screen.getAllByRole("button", { name: /Löschen/ }).at(-1)!);
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true));
+    expect(screen.getByRole("heading", { name: "Beitrag bearbeiten" })).toBeTruthy();
+  });
 });
 
 describe("the page cache", () => {
@@ -548,6 +591,14 @@ describe("the page cache", () => {
     await waitFor(() =>
       expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true),
     );
+  });
+
+  it("clears the progress line when the rebuild never reaches the API", async () => {
+    const u = await openBlog(BLOG, [POST]);
+    unreachable(/\/cache\/rebuild$/, "POST");
+    await u.click(await screen.findByRole("button", { name: "Cache neu bauen" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true));
+    expect(screen.queryByText(/werden neu gebaut/)).toBeNull();
   });
 });
 
@@ -631,6 +682,35 @@ describe("translation controls", () => {
         toasts.some((t) => t.variant === "success" && /0 erstellt, 0 übersprungen/.test(t.message)),
       ).toBe(true),
     );
+  });
+
+  it("clears the progress line when the backfill never reaches the API", async () => {
+    const u = await openBlog();
+    unreachable(/\/translations\/backfill$/, "POST");
+    await u.click(await screen.findByRole("button", { name: /Übersetzungen nachziehen/ }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true));
+    expect(screen.queryByText(/Übersetzungen werden erzeugt/)).toBeNull();
+  });
+});
+
+describe("authors", () => {
+  it("keeps the typed name when adding an author never reaches the API", async () => {
+    const u = await openBlog();
+    unreachable(/\/blog\/authors$/, "POST");
+    await u.type(await screen.findByPlaceholderText("Name (Gast-Autor)"), "Gast");
+    await u.click(screen.getByRole("button", { name: "Autor hinzufügen" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true));
+    expect((screen.getByPlaceholderText("Name (Gast-Autor)") as HTMLInputElement).value).toBe("Gast");
+  });
+
+  it("says so and keeps the author when the removal never reaches the API", async () => {
+    // try/finally without a catch: the rejection went unhandled.
+    const u = await openBlog(BLOG, [], [{ id: 3, name: "Gast" }]);
+    unreachable(/\/blog\/authors\/3$/, "DELETE");
+    await u.click(await screen.findByRole("button", { name: "Entfernen" }));
+    await u.click(screen.getAllByRole("button", { name: "Entfernen" }).at(-1)!);
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true));
+    expect(screen.getByText("Gast")).toBeTruthy();
   });
 });
 

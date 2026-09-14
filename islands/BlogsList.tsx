@@ -187,7 +187,14 @@ function BlogPosts({ blog }: { blog: Blog }) {
 
   const backfill = async () => {
     setBackfillStatus("Übersetzungen werden erzeugt …");
-    const res = await api(`/blogs/${blog.blog_key}/translations/backfill`, { method: "POST" });
+    const res = await api(`/blogs/${blog.blog_key}/translations/backfill`, { method: "POST" }).catch(() => null);
+    if (res === null) {
+      // apiFetch rejects when the request never reaches the API; uncaught, the
+      // progress line stayed on screen for good.
+      setBackfillStatus(null);
+      toast.danger("Übersetzungslauf fehlgeschlagen — die API ist nicht erreichbar.");
+      return;
+    }
     if (res.ok) {
       const d = await res.json().catch(() => ({}));
       setBackfillStatus(null);
@@ -216,7 +223,12 @@ function BlogPosts({ blog }: { blog: Blog }) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ slug }),
-    });
+    }).catch(() => null);
+    if (res === null) {
+      setCacheStatus(null);
+      toast.danger("Cache-Neubau fehlgeschlagen — die API ist nicht erreichbar.");
+      return;
+    }
     if (res.ok) {
       setCacheStatus(null);
       toast.success(`Cache-Neubau für „${slug}“ wurde angefragt.`);
@@ -233,7 +245,11 @@ function BlogPosts({ blog }: { blog: Blog }) {
   };
 
   const openPost = async (p: PostMeta) => {
-    const res = await api(`/blogs/${blog.blog_key}/posts/${p.slug}?lang=${p.lang}`);
+    const res = await api(`/blogs/${blog.blog_key}/posts/${p.slug}?lang=${p.lang}`).catch(() => null);
+    if (res === null) {
+      toast.danger("Beitrag konnte nicht geladen werden — die API ist nicht erreichbar.");
+      return;
+    }
     if (!res.ok) {
       toast.danger(`Beitrag konnte nicht geladen werden (HTTP ${res.status}).`);
       return;
@@ -421,8 +437,13 @@ function PostEditor({
         author_id: form.author_id,
         draft: form.draft,
       }),
-    });
+    }).catch(() => null);
     setBusy(false);
+    if (res === null) {
+      // The editor stays open with everything typed into it.
+      toast.danger("Speichern fehlgeschlagen — die API ist nicht erreichbar.");
+      return;
+    }
     if (!res.ok) {
       // Never swallow the status: it is what tells "session expired" from
       // "service down" apart in a bug report.
@@ -450,9 +471,13 @@ function PostEditor({
   // destructive action.
   const remove = async () => {
     setBusy(true);
-    const res = await api(`/blogs/${blogKey}/posts/${form.slug}?lang=${form.lang}`, { method: "DELETE" });
+    const res = await api(`/blogs/${blogKey}/posts/${form.slug}?lang=${form.lang}`, { method: "DELETE" }).catch(() => null);
     setBusy(false);
     setConfirmDelete(false);
+    if (res === null) {
+      toast.danger("Löschen fehlgeschlagen — die API ist nicht erreichbar.");
+      return;
+    }
     if (res.ok) {
       toast.success("Beitrag gelöscht.");
       onDone();
@@ -630,7 +655,11 @@ function AuthorManager({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    });
+    }).catch(() => null);
+    if (res === null) {
+      toast.danger("Speichern fehlgeschlagen — die API ist nicht erreichbar.");
+      return;
+    }
     if (res.ok) {
       reset?.();
       setStatus(null);
@@ -666,6 +695,11 @@ function AuthorManager({
       const res = await api(`/blog/authors/${a.id}`, { method: "DELETE" });
       setPendingDelete(null);
       if (res.ok) onChange();
+    } catch {
+      // apiFetch rejects when the request never reaches the API; without this
+      // the rejection went unhandled and the dialog stayed open on nothing.
+      setPendingDelete(null);
+      toast.danger("Löschen fehlgeschlagen — die API ist nicht erreichbar.");
     } finally {
       setDeleting(false);
     }

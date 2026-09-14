@@ -15,7 +15,7 @@ import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
  * and truthful cache outcomes.
  */
 
-type Hit = { status?: number; body?: unknown };
+type Hit = { status?: number; body?: unknown; unreachable?: boolean };
 let handlers: Array<(url: string, init?: RequestInit) => Hit | undefined> = [];
 let calls: Array<{ url: string; method: string; body: unknown }> = [];
 
@@ -26,6 +26,15 @@ function respond(match: RegExp, body: unknown, status = 200, method?: string) {
     if (!match.test(pathOf(url))) return undefined;
     if (method && (init?.method ?? "GET") !== method) return undefined;
     return { status, body };
+  });
+}
+
+/** A request that never reaches the API: fetch itself rejects, as it does offline. */
+function unreachable(match: RegExp, method?: string) {
+  handlers.unshift((url, init) => {
+    if (!match.test(pathOf(url))) return undefined;
+    if (method && (init?.method ?? "GET") !== method) return undefined;
+    return { unreachable: true };
   });
 }
 
@@ -52,6 +61,7 @@ beforeEach(() => {
       for (const h of handlers) {
         const hit = h(url, init);
         if (hit) {
+          if (hit.unreachable) throw new TypeError("Failed to fetch");
           const status = hit.status ?? 200;
           return { ok: status >= 200 && status < 300, status, json: async () => hit.body ?? {} } as Response;
         }
@@ -131,6 +141,18 @@ describe("adding a blog", () => {
     await u.click(screen.getByRole("button", { name: "Blog hinzufügen" }));
     await waitFor(() => expect(toasts.length).toBeGreaterThan(0));
     expect(toasts[toasts.length - 1]!.message).toContain("409");
+  });
+
+  it("releases the form when the create never reaches the API", async () => {
+    // fetch rejects offline; unhandled, the button stayed on its spinner.
+    unreachable(/\/blogs$/, "POST");
+    const u = await renderRegistry([]);
+    await u.type(screen.getByLabelText("Schlüssel"), "shop");
+    await u.type(screen.getByLabelText("Name"), "Shop");
+    await u.click(screen.getByRole("button", { name: "Blog hinzufügen" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("Netzwerkfehler"))).toBe(true));
+    expect((screen.getByLabelText("Schlüssel") as HTMLInputElement).value).toBe("shop");
+    expect(screen.getByRole("button", { name: "Blog hinzufügen" })).toBeTruthy();
   });
 
   it("clears the form after a successful create", async () => {
@@ -238,6 +260,26 @@ describe("per-blog API connection", () => {
     await u.click(await screen.findByRole("button", { name: "Seiten-Cache neu bauen" }));
     expect(await screen.findByText(/noch nicht vollständig mit der API verbunden/)).toBeTruthy();
     expect(toasts.some((t) => t.variant === "success")).toBe(false);
+  });
+
+  it("clears the cache message when the rebuild never reaches the API", async () => {
+    unreachable(/\/blogs\/haupt\/cache\/rebuild$/, "POST");
+    const u = await renderRegistry();
+    await u.click(await screen.findByRole("button", { name: "Seiten-Cache neu bauen" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("Netzwerkfehler"))).toBe(true));
+    expect(screen.queryByText("Seiten-Cache wird neu gebaut …")).toBeNull();
+  });
+
+  it("keeps the connection when the disconnect never reaches the API", async () => {
+    respond(/\/blogs$/, { blogs: [BLOG] }, 200, "GET");
+    respond(/\/cms\/sites$/, { sites: [] }, 200, "GET");
+    respond(/\/blogs\/haupt\/connection$/, { connection: { origin: "https://blog.example", status: "connected" } }, 200, "GET");
+    unreachable(/\/blogs\/haupt\/connection$/, "DELETE");
+    render(<BlogRegistry />);
+    const u = user();
+    await u.click(await screen.findByRole("button", { name: "Verbindung trennen" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("Netzwerkfehler"))).toBe(true));
+    expect(screen.getByText("Verbunden mit https://blog.example")).toBeTruthy();
   });
 });
 

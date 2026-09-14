@@ -19,6 +19,8 @@ import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
 let calls: Array<{ url: string; method: string; body: unknown }> = [];
 let getResponse: { status: number; body: unknown } = { status: 200, body: { settings: [] } };
 let putStatus = 200;
+/** Methods whose request never reaches the API: fetch itself rejects, as it does offline. */
+let unreachableMethods: string[] = [];
 
 /** Outcomes are toasts now — collected off the `tds:toast` bus. */
 let toasts: Array<{ variant: string; message: string }> = [];
@@ -32,11 +34,13 @@ beforeEach(() => {
   calls = [];
   getResponse = { status: 200, body: { settings: [] } };
   putStatus = 200;
+  unreachableMethods = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       calls.push({ url, method, body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined });
+      if (unreachableMethods.includes(method)) throw new TypeError("Failed to fetch");
       if (method === "PUT") {
         return { ok: putStatus < 300, status: putStatus, json: async () => ({}) } as Response;
       }
@@ -160,6 +164,13 @@ describe("loading", () => {
     await renderSettings();
     await waitFor(() => expect(screen.queryByLabelText("Wird geladen")).toBeNull());
   });
+
+  it("says so instead of loading forever when the API is unreachable", async () => {
+    unreachableMethods = ["GET"];
+    await renderSettings();
+    expect(await screen.findByText("Einstellungen konnten nicht geladen werden — die API ist nicht erreichbar.")).toBeTruthy();
+    expect(screen.queryByLabelText("Wird geladen")).toBeNull();
+  });
 });
 
 describe("auto-translate", () => {
@@ -261,6 +272,18 @@ describe("saving", () => {
     await user().click(await screen.findByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
     expect(calls.filter((c) => c.method === "GET")).toHaveLength(1);
+  });
+
+  it("keeps a typed secret when the save never reaches the API", async () => {
+    await renderSettings();
+    unreachableMethods = ["PUT"];
+    const u = user();
+    const [deepl] = await screen.findAllByPlaceholderText(/leer = behalten/);
+    await u.type(deepl!, "secret");
+    await u.click(screen.getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true));
+    expect((deepl as HTMLInputElement).value).toBe("secret");
+    expect((screen.getByRole("button", { name: "Speichern" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("sends JSON with the content type the API expects", async () => {
