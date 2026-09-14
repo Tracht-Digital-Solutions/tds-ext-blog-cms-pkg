@@ -20,14 +20,16 @@ import BlogRegistry from "./BlogRegistry.tsx";
 // the reason the user navigated.
 ---
 
+{/* No section heading of its own: the Einstellungen host renders this
+    section's `label` as the h2 directly above, and an h3 here repeated it
+    verbatim. "Blogs" is therefore the first level below it, an h3. */}
 <div class="tds-settings-section__body">
-  <h3>Blog-CMS</h3>
   <BlogSettings client:visible />
 
-  <h4>Blogs</h4>
+  <h3>Blogs</h3>
   <p class="marginalia">
-    Hier werden Blogs hinzugefügt. Die Beiträge selbst werden unter
-    <a class="link-underline" href="/blog">Blog-CMS</a> geschrieben — dort wird pro
+    Hier werden Blogs hinzugefügt. Die Beiträge selbst werden
+    unter <a class="link-underline" href="/blog">Blog-CMS</a> geschrieben — dort wird pro
     Artikel ausgewählt, was geändert werden soll.
   </p>
   <BlogRegistry client:visible />
