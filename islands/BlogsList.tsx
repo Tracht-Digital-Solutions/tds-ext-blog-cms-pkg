@@ -98,18 +98,10 @@ export default function BlogsList() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   // Follow the registry: a blog that disappears (or the first one to arrive)
-  // must not leave the screen pointing at nothing.
-  useEffect(() => {
-    if (blogs.length === 0) {
-      if (selectedKey !== null) setSelectedKey(null);
-      return;
-    }
-    if (selectedKey === null || !blogs.some((b) => b.blog_key === selectedKey)) {
-      setSelectedKey(blogs[0]?.blog_key ?? null);
-    }
-  }, [blogs, selectedKey]);
-
-  const selected = blogs.find((b) => b.blog_key === selectedKey) ?? null;
+  // must not leave the screen pointing at nothing. Derived, not written back by
+  // an effect: the effect's stale closure overwrote a click that landed before
+  // it ran (seen in CI on the website CMS's twin of this screen).
+  const selected = blogs.find((b) => b.blog_key === selectedKey) ?? blogs[0] ?? null;
 
   if (blogsQuery.loading) {
     return (
@@ -163,8 +155,8 @@ export default function BlogsList() {
             <button
               key={b.id}
               type="button"
-              className={b.blog_key === selectedKey ? "chip chip--info" : "chip chip--neutral"}
-              aria-pressed={b.blog_key === selectedKey}
+              className={b.blog_key === selected?.blog_key ? "chip chip--info" : "chip chip--neutral"}
+              aria-pressed={b.blog_key === selected?.blog_key}
               onClick={() => setSelectedKey(b.blog_key)}
             >
               {b.name}
