@@ -752,22 +752,38 @@ function AuthorManager({
 
 
       {importable.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 mt-3">
-          <span className="text-sm">Aus Panel-Nutzer:</span>
-          <select className="field-boxed" value={pickedUser} onChange={(e) => setPickedUser(e.target.value)}>
-            <option value="">— Nutzer wählen —</option>
-            {importable.map((u) => (
-              <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-end gap-2 mt-3">
+          {/* A real label: the loose "Aus Panel-Nutzer:" text beside the
+              select named nothing, so the select announced as an unnamed
+              combobox. */}
+          <label className="tds-field-row">
+            <span>Aus Panel-Nutzer</span>
+            <select className="field-boxed" value={pickedUser} onChange={(e) => setPickedUser(e.target.value)}>
+              <option value="">— Nutzer wählen —</option>
+              {importable.map((u) => (
+                <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
+              ))}
+            </select>
+          </label>
           <button className="btn btn-primary" type="button" onClick={importUser} disabled={pickedUser === ""}>Als Autor übernehmen</button>
         </div>
       ) : null}
 
-      <div className="flex flex-wrap gap-2 mt-2">
-        <input className="field-boxed" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Gast-Autor)" />
-        <input className="field-boxed" value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Kurzbio (optional)" />
-        <input className="field-boxed" value={avatar} onChange={(e) => setAvatar(e.target.value)} placeholder="Avatar-URL (optional)" />
+      {/* Visible labels: placeholders alone vanish on the first keystroke and
+          are skipped by many screen readers. */}
+      <div className="flex flex-wrap items-end gap-2 mt-2">
+        <label className="tds-field-row">
+          <span>Gast-Autor</span>
+          <input className="field-boxed" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Gast-Autor)" />
+        </label>
+        <label className="tds-field-row">
+          <span>Kurzbio</span>
+          <input className="field-boxed" value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Kurzbio (optional)" />
+        </label>
+        <label className="tds-field-row">
+          <span>Avatar-URL</span>
+          <input className="field-boxed" value={avatar} onChange={(e) => setAvatar(e.target.value)} placeholder="Avatar-URL (optional)" />
+        </label>
         <button className="btn btn-primary" type="button" onClick={add}>Autor hinzufügen</button>
       </div>
       {/* Validation only now — outcomes are toasts. */}
