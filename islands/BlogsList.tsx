@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { ConfirmDialog, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
+import {
+  AnimatedItem,
+  AnimatedList,
+  Collapse,
+  Presence,
+  TabIndicator,
+} from "@tracht-digital-solutions/tds-shared/motion/react";
 import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
 import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
 // The escape-first renderer moved to tds-shared: the customer wiki renders
@@ -155,17 +162,22 @@ export default function BlogsList() {
             <button
               key={b.id}
               type="button"
-              className={b.blog_key === selected?.blog_key ? "chip chip--info" : "chip chip--neutral"}
+              className={b.blog_key === selected?.blog_key ? "chip tds-tab chip--info" : "chip tds-tab chip--neutral"}
               aria-pressed={b.blog_key === selected?.blog_key}
               onClick={() => setSelectedKey(b.blog_key)}
             >
               {b.name}
+              {b.blog_key === selected?.blog_key ? <TabIndicator group="blog-picker" /> : null}
             </button>
           ))}
         </div>
       ) : null}
 
-      {selected ? <BlogPosts key={selected.blog_key} blog={selected} /> : null}
+      {selected ? (
+        <Presence view={selected.blog_key}>
+          <BlogPosts key={selected.blog_key} blog={selected} />
+        </Presence>
+      ) : null}
     </div>
   );
 }
@@ -276,8 +288,7 @@ function BlogPosts({ blog }: { blog: Blog }) {
     setEditing({ ...EMPTY_POST });
   };
 
-  if (editing) {
-    return (
+  const editor = editing ? (
       <PostEditor
         blogKey={blog.blog_key}
         post={editing}
@@ -290,10 +301,10 @@ function BlogPosts({ blog }: { blog: Blog }) {
         }}
         onCancel={() => setEditing(null)}
       />
-    );
-  }
+  ) : null;
 
-  return (
+  // Plain JSX, not an inner component (which would remount on every render).
+  const list = (
     <div className="blog-posts tds-stack">
       <div className="tds-row tds-row--between">
         <h2>{blog.name}</h2>
@@ -309,11 +320,11 @@ function BlogPosts({ blog }: { blog: Blog }) {
             : `Die Beiträge konnten nicht aktualisiert werden (${postsQuery.error.message}). Die angezeigten Daten können veraltet sein.`}
         </p>
       ) : null}
-      {cacheStatus ? (
+      <Collapse open={Boolean(cacheStatus)}>
         <p className="tds-alert" role="status">
           {cacheStatus}
         </p>
-      ) : null}
+      </Collapse>
 
       {postsQuery.loading ? (
         <p>
@@ -322,9 +333,9 @@ function BlogPosts({ blog }: { blog: Blog }) {
       ) : posts.length === 0 ? (
         <p className="tds-empty">Noch keine Beiträge.</p>
       ) : (
-        <ul className={staleClass(postsQuery.stale, "tds-list")} aria-busy={postsQuery.stale}>
+        <AnimatedList className={staleClass(postsQuery.stale, "tds-list")} aria-busy={postsQuery.stale}>
           {posts.map((p) => (
-            <li key={`${p.slug}-${p.lang}`} className="tds-list__row">
+            <AnimatedItem key={`${p.slug}-${p.lang}`} className="tds-list__row">
               {/* `flex-wrap` + `min-w-0` + a breakable slug: `.btn` is an
                   unwrapping inline-flex, so title, slug and chips added up to
                   one line. On a phone the row reached 505px in a 390px
@@ -355,9 +366,9 @@ function BlogPosts({ blog }: { blog: Blog }) {
                   Cache neu bauen
                 </button>
               )}
-            </li>
+            </AnimatedItem>
           ))}
-        </ul>
+        </AnimatedList>
       )}
 
       <AuthorManager
@@ -375,17 +386,21 @@ function BlogPosts({ blog }: { blog: Blog }) {
           erzeugt (Schlüssel unter Einstellungen → Blog-CMS). Vorhandene Beiträge lassen
           sich hier nachziehen.
         </p>
-        {backfillStatus ? (
+        <Collapse open={Boolean(backfillStatus)}>
           <p className="tds-alert" role="status">
             {backfillStatus}
           </p>
-        ) : null}
+        </Collapse>
         <button className="btn btn-primary" type="button" onClick={backfill}>
           Übersetzungen nachziehen
         </button>
       </div>
     </div>
   );
+
+  // List <-> editor, cross-faded in place.
+  const view = editing ? `edit-${isExisting ? `${editing.slug}-${editing.lang}` : "new"}` : "list";
+  return <Presence view={view}>{editor ?? list}</Presence>;
 }
 
 function PostEditor({
@@ -597,7 +612,9 @@ function PostEditor({
       </label>
 
       {/* Validation only now — outcomes are toasts. */}
-      {status ? <p className="tds-alert tds-alert--danger" role="alert">{status}</p> : null}
+      <Collapse open={Boolean(status)}>
+        <p className="tds-alert tds-alert--danger" role="alert">{status}</p>
+      </Collapse>
 
       <div className="tds-toolbar">
         <button className="btn btn-primary" type="button" onClick={save} disabled={busy}>Speichern</button>
@@ -724,20 +741,20 @@ function AuthorManager({
       ) : authors.length === 0 ? (
         <p className="text-xs opacity-60">Noch keine Autoren.</p>
       ) : (
-        <ul className={staleClass(stale, "tds-list")} aria-busy={stale}>
+        <AnimatedList className={staleClass(stale, "tds-list")} aria-busy={stale}>
           {authors.map((a) => (
             // `.tds-list__row` — the class this `<ul className="tds-list">`
             // was already asking for, and the one that brings `flex-wrap`.
             // Hand-rolled `flex` here meant four items (name, chip, a free-text
             // bio and a button) on one un-wrappable line.
-            <li key={a.id} className="tds-list__row">
+            <AnimatedItem key={a.id} className="tds-list__row">
               <strong>{a.name}</strong>
               {a.user_id ? <span className="chip chip--cat-violet">Panel-Nutzer</span> : null}
               {a.bio ? <span className="text-xs opacity-60">{a.bio}</span> : null}
               <button type="button" className="btn btn-danger text-xs ml-auto" onClick={() => setPendingDelete(a)}>Entfernen</button>
-            </li>
+            </AnimatedItem>
           ))}
-        </ul>
+        </AnimatedList>
       )}
 
       <ConfirmDialog
@@ -787,7 +804,9 @@ function AuthorManager({
         <button className="btn btn-primary" type="button" onClick={add}>Autor hinzufügen</button>
       </div>
       {/* Validation only now — outcomes are toasts. */}
-      {status ? <p className="tds-alert tds-alert--danger" role="alert">{status}</p> : null}
+      <Collapse open={Boolean(status)}>
+        <p className="tds-alert tds-alert--danger" role="alert">{status}</p>
+      </Collapse>
     </div>
   );
 }

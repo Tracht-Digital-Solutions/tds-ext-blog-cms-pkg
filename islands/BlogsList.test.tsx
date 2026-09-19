@@ -253,7 +253,8 @@ describe("choosing a blog", () => {
     respond(/\/blog\/authors$/, { authors: [] }, 200, "GET");
     await renderList([BLOG, { id: 2, blog_key: "zweit", name: "Zweitblog" }]);
     await user().click(await screen.findByRole("button", { name: "Neuer Beitrag" }));
-    expect(screen.getByRole("heading", { name: "Neuer Beitrag" })).toBeTruthy();
+    // The list cross-fades to the editor (Presence), so it arrives a moment later.
+    expect(await screen.findByRole("heading", { name: "Neuer Beitrag" })).toBeTruthy();
 
     const picker = screen.getByRole("group", { name: "Blog wählen" });
     await user().click(within(picker).getByRole("button", { name: "Zweitblog" }));
@@ -272,6 +273,8 @@ describe("the post editor", () => {
     await renderList();
     const u = user();
     await u.click(await screen.findByRole("button", { name: "Neuer Beitrag" }));
+    // The list cross-fades to the editor (Presence): wait until it is there.
+    await screen.findByRole("heading", { name: "Neuer Beitrag" });
     return u;
   }
 
@@ -420,7 +423,7 @@ describe("the editor's markdown preview", () => {
   async function typeBody(body: string) {
     const u = await openBlog();
     await u.click(await screen.findByRole("button", { name: "Neuer Beitrag" }));
-    await u.type(screen.getByPlaceholderText(/Text in Markdown/), body);
+    await u.type(await screen.findByPlaceholderText(/Text in Markdown/), body);
     await u.click(screen.getByRole("button", { name: "Vorschau" }));
     return u;
   }
@@ -598,7 +601,7 @@ describe("the page cache", () => {
     unreachable(/\/cache\/rebuild$/, "POST");
     await u.click(await screen.findByRole("button", { name: "Cache neu bauen" }));
     await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true));
-    expect(screen.queryByText(/werden neu gebaut/)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(/werden neu gebaut/)).toBeNull());
   });
 });
 
@@ -608,7 +611,7 @@ describe("what a save says afterwards", () => {
     respond(/\/blogs\/haupt\/posts\/[a-z-]+$/, response, 200, "PUT");
     const u = await openBlog();
     await u.click(await screen.findByRole("button", { name: "Neuer Beitrag" }));
-    await u.type(screen.getByPlaceholderText("mein-beitrag"), "hallo");
+    await u.type(await screen.findByPlaceholderText("mein-beitrag"), "hallo");
     await u.type(screen.getByPlaceholderText(/Titel/), "Hallo");
     await u.type(screen.getByPlaceholderText(/Text in Markdown/), "Text");
     if (publish) await u.click(screen.getByLabelText(/Veröffentlichen/));
@@ -689,7 +692,7 @@ describe("translation controls", () => {
     unreachable(/\/translations\/backfill$/, "POST");
     await u.click(await screen.findByRole("button", { name: /Übersetzungen nachziehen/ }));
     await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("nicht erreichbar"))).toBe(true));
-    expect(screen.queryByText(/Übersetzungen werden erzeugt/)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(/Übersetzungen werden erzeugt/)).toBeNull());
   });
 });
 

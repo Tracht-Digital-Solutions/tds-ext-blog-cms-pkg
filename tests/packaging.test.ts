@@ -88,8 +88,11 @@ describe("dependency hygiene", () => {
     expect(range, "a file:/link: range never resolves for a consumer").not.toMatch(/^(file:|link:)/);
   });
 
-  it("requires the tds-shared release that exports the SWR data cache", () => {
-    expect(pkg.peerDependencies?.["@tracht-digital-solutions/tds-shared"]).toBe(">=0.33.0");
+  it("requires the tds-shared release with the motion primitives", () => {
+    // 0.33.0 brought the SWR data cache this package also uses; 0.38.2 is the
+    // first release whose `motion/react` primitives make a leaving element
+    // inert, which the islands and their tests rely on.
+    expect(pkg.peerDependencies?.["@tracht-digital-solutions/tds-shared"]).toBe(">=0.38.2");
   });
 
   it("stays inside the 0.2.x line the host pins with a caret", () => {

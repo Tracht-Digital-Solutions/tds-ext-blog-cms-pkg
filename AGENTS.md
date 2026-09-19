@@ -30,6 +30,15 @@ Blog-CMS extension, ported from `tds-content-api`'s blog-post model. Read
 
 ## Gotchas
 
+- **Motion comes from `tds-shared/motion/react` (peer `>=0.38.2`).** The blog
+  picker carries a `TabIndicator` and cross-fades between blogs, the post list
+  and the editor swap with `Presence`, post and author rows are
+  `AnimatedList`s, and every in-flow status line (cache, backfill, editor and
+  author validation) opens with `Collapse`. List and editor are JSX
+  variables, never inner components. Because a swapped-out view or a closing
+  line stays in the DOM (aria-hidden + inert) for its exit, tests `findBy…`
+  what a click brings in and `waitFor` what it takes away.
+
 - **Never guard a container binding with `!$c->has(X::class)` — saving a post
   500'd for months because of it.** PHP-DI answers `has()` out of its definition
   sources, and *autowiring is one of them*: for any concrete, instantiable class
