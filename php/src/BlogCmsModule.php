@@ -25,6 +25,7 @@ use Tds\Frontend\Contract\SiteConnectionIdentity;
 use Tds\Frontend\Contract\SiteConnections;
 use Tds\Frontend\Contract\SiteKeyProtected;
 use Tds\Frontend\Contract\UserContext;
+use Tds\Frontend\Contract\ModuleHttp;
 
 /**
  * Backend Module for the Blog-CMS (checkpoint-1: blog registry + per-(blog, slug,
@@ -34,6 +35,8 @@ use Tds\Frontend\Contract\UserContext;
  */
 final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKeyProtected
 {
+    use ModuleHttp;
+
     private const LANGS = ['de', 'en'];
 
     public function id(): string
@@ -696,17 +699,6 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
         };
     }
 
-    private static function require(UserContext $user, string $permission, Response $res): ?Response
-    {
-        if (!$user->isAuthenticated()) {
-            return self::json($res, ['error' => 'Unauthorized'], 401);
-        }
-        if (!$user->has($permission)) {
-            return self::json($res, ['error' => 'Forbidden'], 403);
-        }
-        return null;
-    }
-
     private static function lang(mixed $value): string
     {
         $v = is_string($value) ? strtolower($value) : '';
@@ -788,12 +780,6 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
     private static function setting(\Psr\Container\ContainerInterface $c): ?SettingsStore
     {
         return $c->has(SettingsStore::class) ? $c->get(SettingsStore::class) : null;
-    }
-
-    private static function json(Response $res, mixed $data, int $status = 200): Response
-    {
-        $res->getBody()->write(json_encode($data, JSON_THROW_ON_ERROR));
-        return $res->withStatus($status)->withHeader('Content-Type', 'application/json');
     }
 
     /**
