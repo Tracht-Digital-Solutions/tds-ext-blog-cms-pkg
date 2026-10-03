@@ -373,6 +373,20 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             if ($authorId > 0 && !$repo->authorExists($authorId)) {
                 $authorId = 0;
             }
+            // An explicit publication date must be a date; none means "keep
+            // the stored one" (see upsertPost). The old default — date() on
+            // every save — re-dated a published article each time it was
+            // edited, moving it to the top of the journal.
+            $publishedAt = null;
+            if (!$draft && isset($body['published_at']) && trim((string) $body['published_at']) !== '') {
+                try {
+                    $publishedAt = (new \DateTimeImmutable((string) $body['published_at']))
+                        ->setTimezone(new \DateTimeZone(date_default_timezone_get()))
+                        ->format('Y-m-d H:i:s');
+                } catch (\Exception) {
+                    return self::json($res, ['error' => 'published_at is not a valid date'], 422);
+                }
+            }
             $data = [
                 'category' => trim((string) ($body['category'] ?? 'allgemein')) ?: 'allgemein',
                 'title' => $title,
@@ -383,23 +397,24 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
                 'cover_hint' => isset($body['cover_hint']) && $body['cover_hint'] !== '' ? (string) $body['cover_hint'] : null,
                 'author_id' => $authorId > 0 ? $authorId : null,
                 'draft' => $draft,
-                // Publishing sets published_at when it's a non-draft with none yet.
-                'published_at' => $draft ? null : ($body['published_at'] ?? date('Y-m-d H:i:s')),
+                // null = keep the stored date, or now on first publication.
+                'published_at' => $publishedAt,
                 // A manual save is authored content — clears any machine-translated flag.
                 'machine_translated' => false,
             ];
             $repo->upsertPost((int) $blog['id'], (string) $args['slug'], $lang, $data);
             // Auto-translate the counterpart language (best-effort, published only).
             $translated = $c->get(TranslationSync::class)->afterSave((int) $blog['id'], (string) $args['slug'], $lang, $data);
-            $cache = self::emptyCacheReport('skipped');
-            if (!$draft) {
-                // Both languages when the counterpart was machine-translated in
-                // the same call: the English article changed too, and rebuilding
-                // only the saved language leaves it showing the old translation.
-                $cache = self::fireCache($c, $blog, [$translated
-                    ? new CacheEvent('post', (string) $args['slug'])
-                    : new CacheEvent('post', (string) $args['slug'], $lang)]);
-            }
+            // Drafts too: saving a published article back to draft takes it
+            // OFF the journal, and without an event its cached page, the
+            // listings and the sitemap kept showing it.
+            //
+            // Both languages when the counterpart was machine-translated in
+            // the same call: the English article changed too, and rebuilding
+            // only the saved language leaves it showing the old translation.
+            $cache = self::fireCache($c, $blog, [$translated
+                ? new CacheEvent('post', (string) $args['slug'])
+                : new CacheEvent('post', (string) $args['slug'], $lang)]);
             return self::json($res, array_merge(['ok' => true, 'translated' => $translated], $cache));
         });
 

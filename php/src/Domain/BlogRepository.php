@@ -175,17 +175,19 @@ final class BlogRepository
         $tags = $d['tags'] ?? null;
         $stmt = $this->pdo->prepare(
             'INSERT INTO blog_post (blog_id, slug, lang, category, title, excerpt, meta_description, tags, body, cover_hint, author_id, draft, machine_translated, published_at)
-             VALUES (:b, :s, :l, :cat, :title, :excerpt, :meta, :tags, :body, :cover, :author, :draft, :mt, :pub)
+             VALUES (:b, :s, :l, :cat, :title, :excerpt, :meta, :tags, :body, :cover, :author, :draft, :mt,
+                     CASE WHEN :draftp = 1 THEN NULL ELSE COALESCE(:pub, NOW()) END)
              ON DUPLICATE KEY UPDATE
                 category = :cat2, title = :title2, excerpt = :excerpt2, meta_description = :meta2, tags = :tags2,
-                body = :body2, cover_hint = :cover2, author_id = :author2, draft = :draft2, machine_translated = :mt2, published_at = :pub2'
+                body = :body2, cover_hint = :cover2, author_id = :author2, draft = :draft2, machine_translated = :mt2,
+                published_at = CASE WHEN :draftp2 = 1 THEN NULL ELSE COALESCE(:pub2, published_at, NOW()) END'
         );
         $stmt->execute([
             ':b' => $blogId, ':s' => $slug, ':l' => $lang,
             ':cat' => $d['category'], ':title' => $d['title'], ':excerpt' => $d['excerpt'], ':meta' => $meta, ':tags' => $tags,
-            ':body' => $d['body'], ':cover' => $d['cover_hint'], ':author' => $authorId, ':draft' => $d['draft'] ? 1 : 0, ':mt' => $machine, ':pub' => $d['published_at'],
+            ':body' => $d['body'], ':cover' => $d['cover_hint'], ':author' => $authorId, ':draft' => $d['draft'] ? 1 : 0, ':mt' => $machine, ':pub' => $d['published_at'] ?? null, ':draftp' => $d['draft'] ? 1 : 0,
             ':cat2' => $d['category'], ':title2' => $d['title'], ':excerpt2' => $d['excerpt'], ':meta2' => $meta, ':tags2' => $tags,
-            ':body2' => $d['body'], ':cover2' => $d['cover_hint'], ':author2' => $authorId, ':draft2' => $d['draft'] ? 1 : 0, ':mt2' => $machine, ':pub2' => $d['published_at'],
+            ':body2' => $d['body'], ':cover2' => $d['cover_hint'], ':author2' => $authorId, ':draft2' => $d['draft'] ? 1 : 0, ':mt2' => $machine, ':pub2' => $d['published_at'] ?? null, ':draftp2' => $d['draft'] ? 1 : 0,
         ]);
     }
 
