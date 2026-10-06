@@ -748,6 +748,16 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             'authorId' => ($r['author_id'] ?? null) !== null ? (int) $r['author_id'] : null,
             'author' => $author,
         ];
+        // Reading time for the list cards (the blog draws each post as a book
+        // whose thickness follows its length). The list query sends only
+        // LENGTH(body), never the body itself; the full read derives it from
+        // the body. Bytes, not characters — close enough for a ~minute figure.
+        $length = array_key_exists('body_length', $r) && $r['body_length'] !== null
+            ? (int) $r['body_length']
+            : (array_key_exists('body', $r) ? strlen((string) $r['body']) : null);
+        if ($length !== null) {
+            $out['readingMinutes'] = self::readingMinutes($length);
+        }
         // Full-post read carries the body + timestamps + SEO meta.
         if (array_key_exists('body', $r)) {
             $out['body'] = (string) $r['body'];
@@ -757,6 +767,16 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
             $out['updatedAt'] = (string) ($r['updated_at'] ?? $r['published_at'] ?? '');
         }
         return $out;
+    }
+
+    /**
+     * Minutes to read a markdown body of `$length` bytes: ~6 bytes per word
+     * (German, with markup) at 220 words a minute, never below 1. The blog
+     * frontend uses the same 220 for its article header.
+     */
+    public static function readingMinutes(int $length): int
+    {
+        return max(1, (int) round($length / 6 / 220));
     }
 
     /** Best-effort URL slug from an author name (this module stores no slug column). */

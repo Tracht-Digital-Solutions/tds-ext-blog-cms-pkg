@@ -83,4 +83,21 @@ final class BlogRepositoryTest extends TestCase
         self::assertSame('https://blog.example', $blog['cache_url'] ?? null);
         self::assertStringContainsString('cache_url', $pdo->queries[0]);
     }
+
+    public function testPublicListSendsTheBodyLengthButNotTheBody(): void
+    {
+        $pdo = new RecordingBlogPdo();
+        (new \Tds\Ext\BlogCms\Domain\BlogRepository($pdo))->publicPosts(1, 'de', 10, null);
+        $sql = implode("
+", $pdo->queries);
+        self::assertStringContainsString('LENGTH(p.body) AS body_length', $sql);
+        self::assertDoesNotMatchRegularExpression('/p\.body\s*,/', $sql);
+    }
+
+    public function testReadingMinutesRoundsAndNeverDropsBelowOne(): void
+    {
+        self::assertSame(1, \Tds\Ext\BlogCms\BlogCmsModule::readingMinutes(0));
+        self::assertSame(1, \Tds\Ext\BlogCms\BlogCmsModule::readingMinutes(1500));
+        self::assertSame(8, \Tds\Ext\BlogCms\BlogCmsModule::readingMinutes(6 * 220 * 8));
+    }
 }

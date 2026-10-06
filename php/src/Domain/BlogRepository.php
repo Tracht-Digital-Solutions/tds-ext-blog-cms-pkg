@@ -223,6 +223,7 @@ final class BlogRepository
         $limit = max(1, min($limit, 100));
         $sql = 'SELECT p.id, p.slug, p.lang, p.category, p.title, p.excerpt, p.tags, p.cover_hint,
                        p.published_at, p.machine_translated, p.author_id,
+                       LENGTH(p.body) AS body_length,
                        a.name AS author_name, a.avatar_url AS author_avatar_url, a.bio AS author_bio
                 FROM blog_post p LEFT JOIN blog_author a ON a.id = p.author_id
                 WHERE p.blog_id = :b AND p.draft = 0 AND p.published_at IS NOT NULL';
