@@ -95,10 +95,12 @@ describe("dependency hygiene", () => {
     expect(pkg.peerDependencies?.["@tracht-digital-solutions/tds-shared"]).toBe(">=0.38.2");
   });
 
-  it("stays inside the 0.2.x line the host pins with a caret", () => {
-    // The host pins this extension with `^0.2.0`; under 0.x a caret means
-    // `>=0.2.0 <0.3.0`, so a 0.3.0 here would silently stop reaching it.
-    expect(pkg.version).toMatch(/^0\.2\./);
+  it("stays inside the 0.3.x line the admin product pins with a caret", () => {
+    // The admin product pins this extension with `^0.3.0` (since 2026-10-07 —
+    // it sat on `^0.2.10` while this repo released 0.3.0, which this test
+    // reported and nobody saw, since CI does not run it). Under 0.x a caret
+    // means `>=0.3.0 <0.4.0`, so a 0.4.0 here would silently stop reaching it.
+    expect(pkg.version).toMatch(/^0\.3\./);
   });
 
   it("exposes the scripts CI runs", () => {
