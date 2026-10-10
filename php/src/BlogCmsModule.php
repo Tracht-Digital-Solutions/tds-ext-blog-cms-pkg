@@ -13,6 +13,7 @@ use Tds\Ext\BlogCms\Service\TranslationSync;
 use Tds\Ext\BlogCms\Support\CacheOrigin;
 use Psr\Container\ContainerInterface;
 use Tds\Frontend\Contract\AbstractModule;
+use Tds\Frontend\Contract\SetupStatusSource;
 use Tds\Frontend\Contract\ApiDocSource;
 use Tds\Frontend\Contract\CacheEvent;
 use Tds\Frontend\Contract\ConnectedSiteCache;
@@ -33,8 +34,11 @@ use Tds\Frontend\Contract\ModuleHttp;
  * (`blog:read`/`blog:write`, admins bypass); data via the core PDO. A save
  * triggering a static-blog rebuild lands in a later checkpoint.
  */
-final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKeyProtected
+final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKeyProtected, SetupStatusSource
 {
+    /** Kept from register() for setupItems(), which the base calls without one. */
+    private ?\Psr\Container\ContainerInterface $setupContainer = null;
+
     use ModuleHttp;
 
     private const LANGS = ['de', 'en'];
@@ -59,9 +63,40 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
         return [__DIR__ . '/../db/migrations'];
     }
 
+    /**
+     * What the panel's setup wizard should say about this module. Uses the
+     * same check the feature itself runs, never a secret.
+     *
+     * @return list<array<string,string>>
+     */
+    public function setupItems(\Tds\Frontend\Contract\UserContext $user): array
+    {
+        $c = $this->setupContainer;
+        if ($c === null) {
+            return [];
+        }
+        $items = [];
+        try {
+            $key = self::setting($c)?->getSecret('blog-cms', 'deepl_api_key');
+            $env = (string) (getenv('BLOG_DEEPL_API_KEY') ?: getenv('DEEPL_API_KEY') ?: '');
+            $items[] = [
+                'id' => 'blog-cms:deepl',
+                'module' => 'blog-cms',
+                'title' => 'Journal: automatische Übersetzung (DeepL)',
+                'description' => 'Ohne DeepL-Schlüssel entstehen keine englischen Fassungen automatisch; sie müssen von Hand geschrieben werden.',
+                'state' => ($key !== null && $key !== '') || $env !== '' ? 'ok' : 'missing',
+                'level' => 'optional',
+                'href' => '/einstellungen#settings-blog-cms',
+            ];
+        } catch (\Throwable) {
+        }
+        return $items;
+    }
+
     public function register(App $app): void
     {
         $c = $app->getContainer();
+        $this->setupContainer = $c;
         // NEVER guard these with `!$c->has(X)`. PHP-DI answers `has()` from its
         // definition sources, and autowiring is one of them: for any *concrete,
         // instantiable* class the answer is always true, whether or not anyone
