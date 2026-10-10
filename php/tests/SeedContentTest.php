@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace Tds\Ext\BlogCms\Tests;
 
-use BlogCmsSeedPostShopMigration;
-use BlogCmsSeedPosts;
 use BlogCmsSeoRefreshMeta;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -19,6 +17,7 @@ use ReflectionClass;
 final class SeedContentTest extends TestCase
 {
     private const MIGRATIONS = __DIR__ . '/../db/migrations';
+    private const SEEDER = __DIR__ . '/../src/Support/PostSeeder.php';
 
     /** @var list<array<string,string>>|null */
     private static ?array $posts = null;
@@ -26,14 +25,37 @@ final class SeedContentTest extends TestCase
     public static function setUpBeforeClass(): void
     {
         require_once __DIR__ . '/stubs/PhinxAbstractMigration.php';
-        require_once self::MIGRATIONS . '/20260728000007_blog_cms_seed_posts.php';
-        require_once self::MIGRATIONS . '/20260728000010_blog_cms_seed_post_shop_migration.php';
         require_once self::MIGRATIONS . '/20260728000011_blog_cms_seo_refresh_meta.php';
 
-        self::$posts = array_merge(
-            (new ReflectionClass(BlogCmsSeedPosts::class))->getConstant('POSTS'),
-            (new ReflectionClass(BlogCmsSeedPostShopMigration::class))->getConstant('POSTS'),
+        $posts = [];
+        foreach (self::seedFiles() as $path) {
+            require_once $path;
+            $posts[] = (new ReflectionClass(self::className($path)))->getConstant('POSTS');
+        }
+        self::$posts = array_merge(...$posts);
+    }
+
+    /**
+     * Every article seed: the launch set (000007) and each later
+     * `*_blog_cms_seed_post_*` migration — a new file is checked without
+     * being listed here.
+     *
+     * @return list<string>
+     */
+    private static function seedFiles(): array
+    {
+        $files = array_merge(
+            glob(self::MIGRATIONS . '/*_blog_cms_seed_posts.php') ?: [],
+            glob(self::MIGRATIONS . '/*_blog_cms_seed_post_*.php') ?: [],
         );
+        sort($files);
+        return $files;
+    }
+
+    private static function className(string $path): string
+    {
+        $name = preg_replace('/^\d{14}_/', '', basename($path, '.php'));
+        return str_replace('_', '', ucwords((string) $name, '_'));
     }
 
     /** @return list<array<string,string>> */
@@ -156,9 +178,20 @@ final class SeedContentTest extends TestCase
 
     public function testSeedInsertsKeepRowsVisibleAndHandWritten(): void
     {
-        foreach (['20260728000007_blog_cms_seed_posts.php', '20260728000010_blog_cms_seed_post_shop_migration.php'] as $file) {
-            $sql = file_get_contents(self::MIGRATIONS . '/' . $file);
+        $sources = [self::SEEDER];
+        foreach (self::seedFiles() as $path) {
+            $source = file_get_contents($path);
+            self::assertIsString($source);
+            // A seed either writes through PostSeeder or carries its own INSERT.
+            if (!str_contains($source, 'PostSeeder::insert(')) {
+                $sources[] = $path;
+            }
+        }
+
+        foreach ($sources as $path) {
+            $sql = file_get_contents($path);
             self::assertIsString($sql);
+            $file = basename($path);
 
             // draft = 0 keeps the row public; machine_translated = 0 stops
             // TranslationSync from replacing hand-written English with DeepL
@@ -166,6 +199,35 @@ final class SeedContentTest extends TestCase
             self::assertStringContainsString('draft, machine_translated)', $sql, $file);
             self::assertStringContainsString(':p, 0, 0)', $sql, $file);
         }
+    }
+
+    public function testProductEmbedsNameASeededShopSlugOfTheirLanguage(): void
+    {
+        $shopSeed = __DIR__ . '/../../../tds-ext-shop-pkg/php/db/seed';
+        if (!is_dir($shopSeed)) {
+            self::markTestSkipped('tds-ext-shop-pkg is not checked out next to this repository');
+        }
+
+        // `{{produkt:<slug>}}` resolves against the shop in the article's own
+        // language. A DE slug in an EN article — or a renamed shop slug —
+        // renders nothing, silently.
+        $slugs = ['de' => [], 'en' => []];
+        foreach (glob($shopSeed . '/affiliate*.php') ?: [] as $file) {
+            foreach (require $file as $product) {
+                $slugs['de'][$product['de']['slug']] = true;
+                $slugs['en'][$product['en']['slug']] = true;
+            }
+        }
+
+        $embeds = 0;
+        foreach ($this->posts() as $post) {
+            preg_match_all('/^\{\{(?:produkt|product):([a-z0-9-]+)(?: (?:card|inline|list))?\}\}$/m', $post['body'], $m);
+            foreach ($m[1] as $slug) {
+                $embeds++;
+                self::assertArrayHasKey($slug, $slugs[$post['lang']], "{$post['slug']} [{$post['lang']}] embeds unknown product {$slug}");
+            }
+        }
+        self::assertGreaterThan(0, $embeds);
     }
 
     public function testMigrationFileNamesMapToTheirClassNames(): void

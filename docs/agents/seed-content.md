@@ -27,9 +27,14 @@ Properties to preserve:
 ## Every further article is its own migration
 
 `20260728000007` has run in production and Phinx won't execute it again; a new entry in its
-`POSTS` array would only reach fresh installations. Copy the pattern of
-`BlogCmsSeedPostShopMigration` (`20260728000010`): same row shape, same INSERT, same
-idempotency, same verbatim-match `down()`.
+`POSTS` array would only reach fresh installations. Since `20260728000012` each article
+migration holds only its `POSTS` and calls `Support\PostSeeder::insert()` / `remove()`, which
+owns the blog/author lookup, the INSERT, idempotency and the verbatim-match `down()`.
+
+The equipment and IT-security guides (`000012`–`000019`) embed TDShop affiliate products with
+a line `{{produkt:<slug>}}` (rendered by tds-blog-frontend). The slug is the shop's slug **in
+the row's language**, seeded in tds-ext-shop `php/db/seed/affiliate*.php`. An unreleased
+product renders nothing, so the article must read on without it.
 
 ## Content corrections
 
@@ -43,5 +48,7 @@ any later correction.
 Reads the constants from the migration files (through a stub for Phinx's base class) and checks
 what otherwise fails silently: DE/EN completeness, `published_at` shape, tags usable as URL
 segments, column limits, effective meta descriptions within 80–160, no dead entry in the refresh
-map, `draft = 0` / `machine_translated = 0` in both INSERTs, file-name ↔ class-name mapping and
-unique version prefixes.
+map, `draft = 0` / `machine_translated = 0` in every INSERT (PostSeeder's included), file-name ↔
+class-name mapping and unique version prefixes. Seed files are globbed, so a new article is checked
+without being listed. With tds-ext-shop-pkg checked out next to this repo, every product embed
+must name an affiliate slug of its own language.
