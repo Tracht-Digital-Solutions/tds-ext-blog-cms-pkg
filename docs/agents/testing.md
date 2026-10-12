@@ -37,6 +37,7 @@ version while every product build composes the current one. Keep these in mind:
 | `php/tests/BlogRepositoryTest.php` | Repository against a real DB (skips without `TDS_TEST_DB_DSN`) |
 | `php/tests/CacheOriginTest.php` | Origin validation |
 | `php/tests/SeedContentTest.php` | Seed migrations (see [seed-content.md](seed-content.md)) |
+| `php/tests/RewriteContentTest.php` | Rewrite migrations: coverage, kept product embeds, FAQ, tool and article links |
 | `php/tests/BlogCmsApiDocsTest.php` | API-doc parity and site-key prefixes |
 
 The escape-first markdown renderer's suite lives in **tds-shared**

@@ -43,6 +43,28 @@ characters, guarded by `WHERE meta_description = :old`. An edited description is
 overwritten and a second run changes nothing. Guarding on the **old value** is the pattern for
 any later correction.
 
+## Rewrites (`20260728000020`–`000029`)
+
+The 2026-10 editorial pass replaced the text of every seeded article: a `**Kurz gesagt:**` /
+`**In short:**` answer first, questions as headings, a `## Häufige Fragen` section, sources for
+facts, internal links between articles and links to the matching tools on
+`tools.tracht-digital.de`. One `*_blog_cms_rewrite_*` migration per seed file names its seed
+(`SEED`) and lists the new title, excerpt, meta and body; `Support\PostRewriter` reads the old
+values from the seed class, so no text is duplicated.
+
+- Title, excerpt and body change only where title **and** body are still the seeded ones; the
+  meta only where the row now carries the new body and still the seeded (refreshed) meta.
+- Slug, category, tags and `published_at` are never touched.
+- Never edit a seed's `POSTS` once a rewrite names it: the guard compares against those values.
+  A further correction is a new rewrite whose `SEED` is the earlier rewrite file.
+- Tool links are absolute: DE `https://tools.tracht-digital.de/tools/<slug>`, EN
+  `…/en/tools/<slug>` (same slugs). Article links are `/<slug>` and `/en/<slug>`.
+
+`php/tests/RewriteContentTest.php` checks that every seeded row is rewritten once, product embeds
+are kept, meta stays within 80–160, every article opens with the answer and ends with an FAQ of
+at least three questions, tool and article links resolve in their language and — with the
+`tds-tool-*` packs checked out next to this repo — every tool is linked in both languages.
+
 ## `php/tests/SeedContentTest.php`
 
 Reads the constants from the migration files (through a stub for Phinx's base class) and checks
