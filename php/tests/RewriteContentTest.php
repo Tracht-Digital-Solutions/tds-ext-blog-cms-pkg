@@ -179,12 +179,24 @@ final class RewriteContentTest extends TestCase
         self::assertGreaterThan(0, $links);
     }
 
-    public function testEveryToolIsLinkedInBothLanguages(): void
+    /**
+     * The tools the 2026-10 rewrite links, pinned here rather than read from
+     * the packs: a tool added later needs no article to keep this green, while
+     * a link dropped from an article still fails. Whether each slug still
+     * exists is `testToolLinksPointIntoTheirLanguageTree`'s job.
+     */
+    private const LINKED_TOOLS = [
+        'barrierefreiheitserklaerung-generator', 'bild-komprimieren', 'bilder-zu-pdf',
+        'datenschutzerklaerung-generator', 'designsystem-studio', 'etiketten-drucken',
+        'impressum-generator', 'json-formatter', 'ki-kennzeichnung-bilder', 'kontrast-checker',
+        'passwort-generator', 'pdf-komprimieren', 'pdf-wasserzeichen', 'pdf-werkzeuge',
+        'pdf-zu-bildern', 'qr-code-generator', 'stundenzettel', 'texterkennung',
+        'utm-link-generator', 'visitenkarten-designer',
+    ];
+
+    public function testEveryPinnedToolIsLinkedInBothLanguages(): void
     {
-        $known = $this->toolSlugs();
-        if ($known === []) {
-            self::markTestSkipped('the tds-tool-* packs are not checked out next to this repository');
-        }
+        $known = array_fill_keys(self::LINKED_TOOLS, true);
 
         $linked = ['de' => [], 'en' => []];
         foreach ($this->rewritten() as $post) {

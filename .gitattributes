@@ -1,0 +1,3 @@
+# Seeded article bodies live in PHP nowdocs; a CRLF checkout changes their text
+# and breaks the rewrite guards and the {{produkt:...}} line match.
+*.php text eol=lf

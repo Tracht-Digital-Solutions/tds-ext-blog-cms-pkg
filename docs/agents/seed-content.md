@@ -62,8 +62,13 @@ values from the seed class, so no text is duplicated.
 
 `php/tests/RewriteContentTest.php` checks that every seeded row is rewritten once, product embeds
 are kept, meta stays within 80–160, every article opens with the answer and ends with an FAQ of
-at least three questions, tool and article links resolve in their language and — with the
-`tds-tool-*` packs checked out next to this repo — every tool is linked in both languages.
+at least three questions, tool and article links resolve in their language (tool slugs against
+the `tds-tool-*` packs when they are checked out next to this repo) and every tool of the pinned
+`LINKED_TOOLS` list is linked in both languages. A tool added later needs no article link; link
+it in a new rewrite and add it to the list if it should stay covered.
+
+`.gitattributes` pins `*.php` to LF: the article bodies are nowdocs, so a CRLF checkout changes
+their text and fails the embed and lead checks.
 
 ## `php/tests/SeedContentTest.php`
 
