@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ConfirmDialog, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
+import { Alert, ConfirmDialog, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 import {
   AnimatedItem,
   AnimatedList,
@@ -7,7 +7,7 @@ import {
   Presence,
   TabIndicator,
 } from "@tracht-digital-solutions/tds-shared/motion/react";
-import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
+import { apiFetch, sendJson } from "@tracht-digital-solutions/tds-shared/api";
 import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
 // The escape-first renderer moved to tds-shared: the customer wiki renders
 // handbook articles with the same function, and an XSS boundary must not
@@ -65,8 +65,6 @@ interface PostDraft {
   draft: boolean;
 }
 
-const api = apiFetch;
-
 const EMPTY_POST: PostDraft = {
   slug: "",
   lang: "de",
@@ -120,9 +118,9 @@ export default function BlogsList() {
 
   if (blogsQuery.error && blogs.length === 0) {
     return (
-      <p className="tds-alert tds-alert--danger" role="alert">
+      <Alert>
         Blogs konnten nicht geladen werden ({blogsQuery.error.message}).
-      </p>
+      </Alert>
     );
   }
 
@@ -145,10 +143,10 @@ export default function BlogsList() {
       aria-busy={blogsQuery.stale}
     >
       {blogsQuery.error ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           Die Blog-Liste konnte nicht aktualisiert werden ({blogsQuery.error.message}).
           Die angezeigten Daten können veraltet sein.
-        </p>
+        </Alert>
       ) : null}
       {/* One blog is the overwhelmingly common case, so the picker only earns
           its space when there is a choice to make. */}
@@ -199,7 +197,7 @@ function BlogPosts({ blog }: { blog: Blog }) {
 
   const backfill = async () => {
     setBackfillStatus("Übersetzungen werden erzeugt …");
-    const res = await api(`/blogs/${blog.blog_key}/translations/backfill`, { method: "POST" }).catch(() => null);
+    const res = await apiFetch(`/blogs/${blog.blog_key}/translations/backfill`, { method: "POST" }).catch(() => null);
     if (res === null) {
       // apiFetch rejects when the request never reaches the API; uncaught, the
       // progress line stayed on screen for good.
@@ -231,11 +229,7 @@ function BlogPosts({ blog }: { blog: Blog }) {
    */
   const rebuildArticle = async (slug: string) => {
     setCacheStatus(`Seiten von „${slug}“ werden neu gebaut …`);
-    const res = await api(`/blogs/${blog.blog_key}/cache/rebuild`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug }),
-    }).catch(() => null);
+    const res = await sendJson(`/blogs/${blog.blog_key}/cache/rebuild`, "POST", { slug }).catch(() => null);
     if (res === null) {
       setCacheStatus(null);
       toast.danger("Cache-Neubau fehlgeschlagen — die API ist nicht erreichbar.");
@@ -257,7 +251,7 @@ function BlogPosts({ blog }: { blog: Blog }) {
   };
 
   const openPost = async (p: PostMeta) => {
-    const res = await api(`/blogs/${blog.blog_key}/posts/${p.slug}?lang=${p.lang}`).catch(() => null);
+    const res = await apiFetch(`/blogs/${blog.blog_key}/posts/${p.slug}?lang=${p.lang}`).catch(() => null);
     if (res === null) {
       toast.danger("Beitrag konnte nicht geladen werden — die API ist nicht erreichbar.");
       return;
@@ -314,16 +308,16 @@ function BlogPosts({ blog }: { blog: Blog }) {
       </div>
 
       {postsQuery.error ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           {posts.length === 0
             ? `Beiträge konnten nicht geladen werden (${postsQuery.error.message}).`
             : `Die Beiträge konnten nicht aktualisiert werden (${postsQuery.error.message}). Die angezeigten Daten können veraltet sein.`}
-        </p>
+        </Alert>
       ) : null}
       <Collapse open={Boolean(cacheStatus)}>
-        <p className="tds-alert" role="status">
+        <Alert tone="neutral">
           {cacheStatus}
-        </p>
+        </Alert>
       </Collapse>
 
       {postsQuery.loading ? (
@@ -387,9 +381,9 @@ function BlogPosts({ blog }: { blog: Blog }) {
           sich hier nachziehen.
         </p>
         <Collapse open={Boolean(backfillStatus)}>
-          <p className="tds-alert" role="status">
+          <Alert tone="neutral">
             {backfillStatus}
-          </p>
+          </Alert>
         </Collapse>
         <button className="btn btn-primary" type="button" onClick={backfill}>
           Übersetzungen nachziehen
@@ -441,10 +435,7 @@ function PostEditor({
     }
     setBusy(true);
     setStatus(null);
-    const res = await api(`/blogs/${blogKey}/posts/${form.slug}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const res = await sendJson(`/blogs/${blogKey}/posts/${form.slug}`, "PUT", {
         lang: form.lang,
         category: form.category.trim() || "allgemein",
         title: form.title.trim(),
@@ -455,8 +446,7 @@ function PostEditor({
         body: form.body,
         author_id: form.author_id,
         draft: form.draft,
-      }),
-    }).catch(() => null);
+      }).catch(() => null);
     setBusy(false);
     if (res === null) {
       // The editor stays open with everything typed into it.
@@ -490,7 +480,7 @@ function PostEditor({
   // destructive action.
   const remove = async () => {
     setBusy(true);
-    const res = await api(`/blogs/${blogKey}/posts/${form.slug}?lang=${form.lang}`, { method: "DELETE" }).catch(() => null);
+    const res = await apiFetch(`/blogs/${blogKey}/posts/${form.slug}?lang=${form.lang}`, { method: "DELETE" }).catch(() => null);
     setBusy(false);
     setConfirmDelete(false);
     if (res === null) {
@@ -613,7 +603,7 @@ function PostEditor({
 
       {/* Validation only now — outcomes are toasts. */}
       <Collapse open={Boolean(status)}>
-        <p className="tds-alert tds-alert--danger" role="alert">{status}</p>
+        <Alert>{status}</Alert>
       </Collapse>
 
       <div className="tds-toolbar">
@@ -672,11 +662,7 @@ function AuthorManager({
   const importable = panelUsers.filter((u) => !linkedUserIds.has(u.id));
 
   const post = async (payload: Record<string, unknown>, reset?: () => void) => {
-    const res = await api("/blog/authors", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch(() => null);
+    const res = await sendJson("/blog/authors", "POST", payload).catch(() => null);
     if (res === null) {
       toast.danger("Speichern fehlgeschlagen — die API ist nicht erreichbar.");
       return;
@@ -713,7 +699,7 @@ function AuthorManager({
     if (!a) return;
     setDeleting(true);
     try {
-      const res = await api(`/blog/authors/${a.id}`, { method: "DELETE" });
+      const res = await apiFetch(`/blog/authors/${a.id}`, { method: "DELETE" });
       setPendingDelete(null);
       if (res.ok) onChange();
     } catch {
@@ -730,11 +716,11 @@ function AuthorManager({
     <div className="blog-authors">
       <h3>Autoren</h3>
       {error ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           {authors.length === 0
             ? `Autoren konnten nicht geladen werden (${error.message}).`
             : `Die Autoren konnten nicht aktualisiert werden (${error.message}). Die angezeigten Daten können veraltet sein.`}
-        </p>
+        </Alert>
       ) : null}
       {loading ? (
         <p><Spinner /></p>
@@ -766,7 +752,6 @@ function AuthorManager({
         onConfirm={() => void confirmRemove()}
         onCancel={() => setPendingDelete(null)}
       />
-
 
       {importable.length > 0 ? (
         <div className="flex flex-wrap items-end gap-2 mt-3">
@@ -805,7 +790,7 @@ function AuthorManager({
       </div>
       {/* Validation only now — outcomes are toasts. */}
       <Collapse open={Boolean(status)}>
-        <p className="tds-alert tds-alert--danger" role="alert">{status}</p>
+        <Alert>{status}</Alert>
       </Collapse>
     </div>
   );

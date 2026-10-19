@@ -88,11 +88,11 @@ describe("dependency hygiene", () => {
     expect(range, "a file:/link: range never resolves for a consumer").not.toMatch(/^(file:|link:)/);
   });
 
-  it("requires the tds-shared release with the motion primitives", () => {
-    // 0.33.0 brought the SWR data cache this package also uses; 0.38.2 is the
-    // first release whose `motion/react` primitives make a leaving element
-    // inert, which the islands and their tests rely on.
-    expect(pkg.peerDependencies?.["@tracht-digital-solutions/tds-shared"]).toBe(">=0.38.2");
+  it("requires the tds-shared release with the admin hooks", () => {
+    // 0.59.1 brought `./admin` (useRuntimeSettings, usePairing), `./format`,
+    // `<Alert>`, `<SummaryMetric>` and the `tds-lint-primitives` bin, which the
+    // islands, their tests and `npm run lint:primitives` rely on.
+    expect(pkg.peerDependencies?.["@tracht-digital-solutions/tds-shared"]).toBe(">=0.59.1");
   });
 
   it("stays inside the 0.3.x line the admin product pins with a caret", () => {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
-import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
+import { Alert, ConfirmDialog, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
+import { usePairing } from "@tracht-digital-solutions/tds-shared/admin";
+import { apiFetch, sendJson } from "@tracht-digital-solutions/tds-shared/api";
 import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
 
 interface Blog {
@@ -21,8 +22,6 @@ interface WebsiteCandidate {
   site_key: string;
   name: string;
 }
-
-const api = apiFetch;
 
 /**
  * The managed-blogs registry — **this is where a blog is added**, and the only
@@ -66,11 +65,7 @@ export default function BlogRegistry() {
     setCreating(true);
     let res: Response;
     try {
-      res = await api("/blogs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blog_key: blogKey, name: name.trim() }),
-      });
+      res = await sendJson("/blogs", "POST", { blog_key: blogKey, name: name.trim() });
     } catch {
       // apiFetch rejects when the request never reaches the API; uncaught, the
       // button stayed on its spinner with the form locked.
@@ -122,9 +117,9 @@ export default function BlogRegistry() {
           </label>
         </div>
         {formError ? (
-          <p className="tds-alert tds-alert--danger" role="alert">
+          <Alert>
             {formError}
-          </p>
+          </Alert>
         ) : null}
         <button className="btn btn-primary" type="submit" disabled={creating}>
           {creating ? <Spinner size="sm" /> : "Blog hinzufügen"}
@@ -132,10 +127,10 @@ export default function BlogRegistry() {
       </form>
 
       {blogsQuery.error && blogs.length > 0 ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           Die Blog-Liste konnte nicht aktualisiert werden ({blogsQuery.error.message}).
           Die angezeigten Daten können veraltet sein.
-        </p>
+        </Alert>
       ) : null}
 
       {blogsQuery.loading ? (
@@ -143,9 +138,9 @@ export default function BlogRegistry() {
           <Spinner />
         </p>
       ) : blogsQuery.error && blogs.length === 0 ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           Blogs konnten nicht geladen werden ({blogsQuery.error.message}).
-        </p>
+        </Alert>
       ) : blogs.length === 0 ? (
         <p className="tds-empty">Noch kein Blog verbunden.</p>
       ) : (
@@ -161,129 +156,36 @@ export default function BlogRegistry() {
 
 /** One-click API connection and targeted page-cache refresh for one blog. */
 function BlogCard({ blog, websites }: { blog: Blog; websites: WebsiteCandidate[] }) {
-  const [connection, setConnection] = useState<Connection | null>(null);
+  const pairing = usePairing({ base: `/blogs/${blog.blog_key}`, profile: "blog", subject: "Der Blog" });
+  const connection = pairing.connection as Connection | null;
   const [origin, setOrigin] = useState("");
   const [website, setWebsite] = useState("");
-  const [candidateKeys, setCandidateKeys] = useState<string[]>(websites.map((item) => item.site_key));
-  const [loading, setLoading] = useState(true);
-  const [connecting, setConnecting] = useState(false);
-  const [installUrl, setInstallUrl] = useState<string | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
-  const [cacheStatus, setCacheStatus] = useState<string | null>(null);
-
-  const loadConnection = async () => {
-    try {
-      const res = await api(`/blogs/${blog.blog_key}/connection`);
-      if (res.status === 404) {
-        setConnection(null);
-      } else if (res.ok) {
-        const body = await res.json();
-        const next = (body.connection ?? body) as Connection;
-        setConnection(next);
-        setOrigin(next.origin ?? "");
-      } else {
-        setConnectionStatus(`Verbindungsstatus konnte nicht geladen werden (HTTP ${res.status}).`);
-      }
-    } catch {
-      setConnectionStatus("Verbindungsstatus konnte nicht geladen werden (Netzwerkfehler).");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
+  const candidateKeys = pairing.candidates ?? websites.map((item) => item.site_key);
 
   useEffect(() => {
-    void loadConnection();
-  }, [blog.blog_key]);
+    if (connection?.origin) setOrigin(connection.origin);
+  }, [connection?.origin]);
 
   useEffect(() => {
-    const keys = websites.map((item) => item.site_key);
-    setCandidateKeys(keys);
-    if (keys.length === 1) setWebsite(keys[0]);
+    if (websites.length === 1) setWebsite(websites[0]!.site_key);
   }, [websites]);
 
-  const connect = async () => {
-    setConnecting(true);
-    setConnectionStatus(null);
-    setInstallUrl(null);
-    try {
-      const bindings = website.trim() === "" ? {} : { website: website.trim() };
-      const res = await api(`/blogs/${blog.blog_key}/connection/pairing`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ origin: origin.trim(), profile: "blog", bindings }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (Array.isArray(body.candidates)) setCandidateKeys(body.candidates.map(String));
-        // The API names the cause (a missing SETTINGS_ENCRYPTION_KEY, a server
-        // fault) — for an operator without log access, the only diagnosis.
-        const reason = typeof body.error === "string" && body.error.trim() !== "" ? body.error.trim() : null;
-        setConnectionStatus(res.status === 422
-          ? (reason ?? "Bitte eine reine HTTPS-Adresse und bei mehreren Websites den passenden Website-Schlüssel angeben.")
-          : `Verbinden fehlgeschlagen (HTTP ${res.status})${reason ? `: ${reason}` : "."}`);
-        return;
-      }
-      setInstallUrl(body.fallback_url ?? body.install_url ?? null);
-      if (body.delivered === true || body.connected === true) {
-        toast.success("Blog mit der API verbunden.");
-        await loadConnection();
-      } else {
-        // `error` is why the hand-over failed — "HTTP 422: invalid_origin" is
-        // the blog's own refusal, which otherwise only its log would show.
-        const why = typeof body.error === "string" && body.error.trim() !== "" ? ` (${body.error.trim()})` : "";
-        setConnectionStatus(`Der Blog hat die Verbindung nicht direkt angenommen${why}. Öffnen Sie den Einrichtungslink auf dem Blog-Server.`);
-      }
-    } catch {
-      setConnectionStatus("Verbinden fehlgeschlagen (Netzwerkfehler).");
-    } finally {
-      setConnecting(false);
-    }
-  };
+  const connect = () => void pairing.connect(origin, website.trim() === "" ? {} : { website: website.trim() });
 
+  const [disconnecting, setDisconnecting] = useState(false);
   const disconnect = async () => {
-    let res: Response;
-    try {
-      res = await api(`/blogs/${blog.blog_key}/connection`, { method: "DELETE" });
-    } catch {
-      toast.danger("Trennen fehlgeschlagen (Netzwerkfehler).");
-      return;
-    }
-    if (res.ok) {
-      setConnection(null);
-      setInstallUrl(null);
-      toast.success("Verbindung getrennt.");
-    } else {
-      toast.danger(`Trennen fehlgeschlagen (HTTP ${res.status}).`);
-    }
+    setDisconnecting(true);
+    await pairing.disconnect();
+    setDisconnecting(false);
+    setConfirmDisconnect(false);
   };
 
   const rebuildCache = async () => {
-    setCacheStatus("Seiten-Cache wird neu gebaut …");
-    let res: Response;
-    try {
-      res = await api(`/blogs/${blog.blog_key}/cache/rebuild`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-    } catch {
-      setCacheStatus(null);
-      toast.danger("Cache-Neubau fehlgeschlagen (Netzwerkfehler).");
-      return;
-    }
-    if (res.ok) {
-      setCacheStatus(null);
-      toast.success("Cache-Neubau wurde angefragt.");
-    } else if (res.status === 422) {
-      setCacheStatus("Die gespeicherte Website-Adresse ist ungültig.");
-    } else if (res.status === 503) {
-      setCacheStatus("Der Blog ist noch nicht vollständig mit der API verbunden.");
-    } else if (res.status === 502) {
-      setCacheStatus("Der Blog ist erreichbar, aber der Cache-Neubau ist fehlgeschlagen. Bitte erneut versuchen.");
-    } else {
-      setCacheStatus(null);
-      toast.danger(`Cache-Neubau fehlgeschlagen (HTTP ${res.status}).`);
-    }
+    setRebuilding(true);
+    await pairing.rebuildCache();
+    setRebuilding(false);
   };
 
   return (
@@ -322,30 +224,31 @@ function BlogCard({ blog, websites }: { blog: Blog; websites: WebsiteCandidate[]
         </label>
       ) : null}
 
-      {loading ? <p><Spinner size="sm" /> Verbindungsstatus wird geladen …</p> : connection ? (
-        <p className="tds-alert tds-alert--success" role="status">Verbunden mit {connection.origin ?? origin}</p>
-      ) : <p className="tds-alert" role="status">Noch nicht mit der API verbunden.</p>}
-      {connectionStatus ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
-          {connectionStatus}
-        </p>
-      ) : null}
-      {installUrl ? <p><a className="btn btn-ghost" href={installUrl}>Einrichtungslink öffnen</a></p> : null}
-      {cacheStatus ? (
-        <p className="tds-alert" role="status">
-          {cacheStatus}
-        </p>
-      ) : null}
+      {pairing.loading ? <p><Spinner size="sm" /> Verbindungsstatus wird geladen …</p> : connection ? (
+        <Alert tone="success">Verbunden mit {connection.origin ?? origin}</Alert>
+      ) : <Alert tone="neutral">Noch nicht mit der API verbunden.</Alert>}
+      <Alert>{pairing.status}</Alert>
+      {pairing.installUrl ? <p><a className="btn btn-ghost" href={pairing.installUrl}>Einrichtungslink öffnen</a></p> : null}
 
       <div className="tds-toolbar">
-        <button className="btn btn-primary" type="button" onClick={connect} disabled={connecting || origin.trim() === "" || (candidateKeys.length > 1 && website === "")}>
-          {connecting ? <Spinner size="sm" /> : connection ? "Neu verbinden" : "Mit API verbinden"}
+        <button className="btn btn-primary" type="button" onClick={connect} disabled={pairing.connecting || origin.trim() === "" || (candidateKeys.length > 1 && website === "")}>
+          {pairing.connecting ? <Spinner size="sm" /> : connection ? "Neu verbinden" : "Mit API verbinden"}
         </button>
-        <button className="btn btn-accent" type="button" onClick={rebuildCache}>
+        <button className="btn btn-accent" type="button" onClick={() => void rebuildCache()} disabled={rebuilding} aria-busy={rebuilding}>
+          {rebuilding ? <Spinner size="sm" /> : null}
           Seiten-Cache neu bauen
         </button>
-        {connection ? <button className="btn btn-ghost" type="button" onClick={disconnect}>Verbindung trennen</button> : null}
+        {connection ? <button className="btn btn-ghost" type="button" onClick={() => setConfirmDisconnect(true)}>Verbindung trennen</button> : null}
       </div>
+      <ConfirmDialog
+        open={confirmDisconnect}
+        title="Verbindung trennen?"
+        message={`Der Blog „${blog.name}" verliert seinen API-Zugang, bis er neu verbunden wird.`}
+        confirmLabel="Trennen"
+        busy={disconnecting}
+        onConfirm={() => void disconnect()}
+        onCancel={() => setConfirmDisconnect(false)}
+      />
     </section>
   );
 }

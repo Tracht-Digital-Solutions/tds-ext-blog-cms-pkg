@@ -232,7 +232,7 @@ describe("per-blog API connection", () => {
     await u.type(await screen.findByLabelText("Adresse des öffentlichen Blogs"), "https://blog.example");
     await u.click(screen.getByRole("button", { name: "Mit API verbinden" }));
     expect(await screen.findByText(
-      "Der Blog hat die Verbindung nicht direkt angenommen (HTTP 422: invalid_origin). Öffnen Sie den Einrichtungslink auf dem Blog-Server.",
+      "Der Blog hat die Verbindung nicht direkt angenommen (HTTP 422: invalid_origin). Öffnen Sie den Einrichtungslink auf dem Server.",
     )).toBeTruthy();
   });
 
@@ -265,9 +265,10 @@ describe("per-blog API connection", () => {
   it("clears the cache message when the rebuild never reaches the API", async () => {
     unreachable(/\/blogs\/haupt\/cache\/rebuild$/, "POST");
     const u = await renderRegistry();
-    await u.click(await screen.findByRole("button", { name: "Seiten-Cache neu bauen" }));
-    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("Netzwerkfehler"))).toBe(true));
-    expect(screen.queryByText("Seiten-Cache wird neu gebaut …")).toBeNull();
+    const button = await screen.findByRole("button", { name: "Seiten-Cache neu bauen" });
+    await u.click(button);
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("die API ist nicht erreichbar"))).toBe(true));
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
   });
 
   it("keeps the connection when the disconnect never reaches the API", async () => {
@@ -278,7 +279,21 @@ describe("per-blog API connection", () => {
     render(<BlogRegistry />);
     const u = user();
     await u.click(await screen.findByRole("button", { name: "Verbindung trennen" }));
-    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("Netzwerkfehler"))).toBe(true));
+    // A disconnect is confirmed first (tds-shared ConfirmDialog).
+    await u.click(await screen.findByRole("button", { name: "Trennen" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("die API ist nicht erreichbar"))).toBe(true));
+    expect(screen.getByText("Verbunden mit https://blog.example")).toBeTruthy();
+  });
+
+  it("asks before disconnecting, and declining sends nothing", async () => {
+    respond(/\/blogs$/, { blogs: [BLOG] }, 200, "GET");
+    respond(/\/cms\/sites$/, { sites: [] }, 200, "GET");
+    respond(/\/blogs\/haupt\/connection$/, { connection: { origin: "https://blog.example", status: "connected" } }, 200, "GET");
+    render(<BlogRegistry />);
+    const u = user();
+    await u.click(await screen.findByRole("button", { name: "Verbindung trennen" }));
+    await u.click(await screen.findByRole("button", { name: "Abbrechen" }));
+    expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(0);
     expect(screen.getByText("Verbunden mit https://blog.example")).toBeTruthy();
   });
 });

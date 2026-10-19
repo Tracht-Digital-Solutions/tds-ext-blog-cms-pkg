@@ -31,6 +31,9 @@ Public routes: [public-api.md](public-api.md).
   *Einstellungen → Blog-CMS* (`BlogRegistry`). `/blog` is the daily content surface: it
   auto-selects the only blog or shows a picker, then selects and edits an article. Never move
   connection or cache-origin fields back beside the article list.
+- **The connection requests are tds-shared `usePairing`** (≥ 0.59.1), shared with the website
+  registry, the tools settings and the cards connection; the card keeps its fields and asks
+  through `ConfirmDialog` before a disconnect. `BlogSettings` is `useRuntimeSettings("blog-cms")`.
 - **Panel reads are stale-while-revalidate** via tds-shared's `./data` entry point (≥ 0.33.0).
   Cached rows paint immediately on a return navigation, wear `tds-stale` + `aria-busy` while
   refreshing, and stay visible with an explicit warning if the refresh fails. A failed refresh
