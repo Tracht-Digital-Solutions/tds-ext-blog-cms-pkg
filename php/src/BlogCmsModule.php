@@ -793,13 +793,17 @@ final class BlogCmsModule extends AbstractModule implements ApiDocSource, SiteKe
         if ($length !== null) {
             $out['readingMinutes'] = self::readingMinutes($length);
         }
-        // Full-post read carries the body + timestamps + SEO meta.
+        // List and full read both carry `updatedAt`: the blog's sitemap needs a
+        // real `lastmod` per post and builds it from the list alone.
+        if (array_key_exists('updated_at', $r)) {
+            $out['updatedAt'] = (string) ($r['updated_at'] ?? $r['published_at'] ?? '');
+        }
+        // Full-post read carries the body + creation time + SEO meta.
         if (array_key_exists('body', $r)) {
             $out['body'] = (string) $r['body'];
             $out['bodyFormat'] = 'markdown';
             $out['metaDescription'] = ($r['meta_description'] ?? null) !== null ? (string) $r['meta_description'] : null;
             $out['createdAt'] = (string) ($r['created_at'] ?? $r['published_at'] ?? '');
-            $out['updatedAt'] = (string) ($r['updated_at'] ?? $r['published_at'] ?? '');
         }
         return $out;
     }

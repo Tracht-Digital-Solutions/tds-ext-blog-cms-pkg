@@ -91,6 +91,7 @@ final class BlogRepositoryTest extends TestCase
         $sql = implode("
 ", $pdo->queries);
         self::assertStringContainsString('LENGTH(p.body) AS body_length', $sql);
+        self::assertStringContainsString('p.updated_at', $sql);
         self::assertDoesNotMatchRegularExpression('/p\.body\s*,/', $sql);
     }
 
