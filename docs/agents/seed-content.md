@@ -70,6 +70,12 @@ it in a new rewrite and add it to the list if it should stay covered.
 `.gitattributes` pins `*.php` to LF: the article bodies are nowdocs, so a CRLF checkout changes
 their text and fails the embed and lead checks.
 
+## Project articles (`20260728000030`, `000031`)
+
+Pi Imager for Android and WParted. They ship in the post-rewrite form, so
+`RewriteContentTest` expects rewrites only for seeds before `20260728000020`. Their covers are
+entries in `editorialCovers.json` and `imageCatalog.json` of the landing page and the blog.
+
 ## `php/tests/SeedContentTest.php`
 
 Reads the constants from the migration files (through a stub for Phinx's base class) and checks

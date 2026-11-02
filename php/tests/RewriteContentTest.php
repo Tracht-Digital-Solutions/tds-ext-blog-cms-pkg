@@ -87,6 +87,10 @@ final class RewriteContentTest extends TestCase
 
         $expected = [];
         foreach (glob(self::MIGRATIONS . '/*_blog_cms_seed_post*.php') ?: [] as $path) {
+            // Articles after the 2026-10 pass already ship in the new form.
+            if (basename($path) >= '20260728000020') {
+                continue;
+            }
             foreach (PostRewriter::seeded(basename($path)) as $post) {
                 $expected[] = "{$post['slug']}|{$post['lang']}";
             }
